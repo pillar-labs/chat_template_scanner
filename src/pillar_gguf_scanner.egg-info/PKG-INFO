@@ -1,0 +1,201 @@
+Metadata-Version: 2.4
+Name: pillar-gguf-scanner
+Version: 0.1.0
+Summary: Fast, programmatic scanning utilities for GGUF chat templates.
+Author: Pillar Security
+License: Apache-2.0
+Project-URL: Homepage, https://pillar.security
+Classifier: Programming Language :: Python :: 3
+Classifier: Operating System :: OS Independent
+Requires-Python: >=3.9
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: gguf>=0.6
+Requires-Dist: httpx>=0.25
+Requires-Dist: rich>=13.0
+Dynamic: license-file
+
+# pillar-gguf-scanner
+
+High-level scanning utilities for GGUF model files. The library extracts embedded chat templates, runs heuristic checks for prompt-injection markers, and optionally consults Pillar’s remote scanning API for deeper analysis.
+
+## Features
+
+- Parse GGUF headers and extract default or named chat templates with a small, dependency-light API.
+- Run configurable heuristics (URLs, base64 payloads, normalize.js patterns, etc.) to flag suspicious templates.
+- Invoke Pillar’s hosted scanning service when an API key is provided, returning unified findings.
+- Stream GGUF headers from plain URLs or Hugging Face repositories using ranged requests.
+- Async and sync functions for local, remote, and Hugging Face scans.
+
+## Installation
+
+### With uv (recommended)
+
+```bash
+# install runtime dependencies
+uv sync
+
+# add testing extras
+uv sync --group test
+```
+
+### Via pip
+
+```bash
+pip install pillar-gguf-scanner
+```
+
+## Quickstart
+
+```python
+from pillar_gguf_scanner import GGUFTemplateScanner, Verdict
+
+scanner = GGUFTemplateScanner()
+result = scanner.scan("models/my-model.gguf")  # accepts paths, URLs, or HuggingFaceRepoRef
+
+print(result.verdict)  # Verdict.CLEAN, Verdict.SUSPICIOUS, Verdict.MALICIOUS, or Verdict.ERROR
+for finding in result.findings:
+    print(f"{finding.rule_id}: {finding.message}")
+
+if result.errors:
+    for detail in result.errors:
+        print(f"error[{detail.code}] -> {detail.message}")
+        if detail.context:
+            print(detail.context)
+```
+
+### Using the Pillar API
+
+```python
+from pillar_gguf_scanner import GGUFTemplateScanner
+
+scanner = GGUFTemplateScanner(pillar_api_key="your-api-key")
+result = scanner.scan("models/my-model.gguf", use_pillar=True)
+```
+
+Set `use_pillar=False` to opt out of remote calls on a per-scan basis. Remote requests use `httpx` clients supplied by the caller or managed internally. Attach `ScannerConfig(event_handler=...)` to receive structured telemetry such as `pillar_response`, `remote_fetch_failed`, and `heuristic_match` events.
+
+## Remote and Async Scans
+
+```python
+import asyncio
+from pillar_gguf_scanner import GGUFTemplateScanner, HuggingFaceRepoRef
+
+scanner = GGUFTemplateScanner()
+
+# direct URL (sync)
+url_result = scanner.scan("https://example.com/model.gguf")
+
+# Hugging Face repo (async)
+async def main():
+    async_result = await scanner.ascan_huggingface(
+        repo_id="owner/repo",
+        filename="model.gguf",
+        token="hf_xxx",  # optional
+    )
+    print(async_result.verdict)
+
+# Or via the unified HuggingFaceRepoRef helper
+hf_result = scanner.scan(
+    HuggingFaceRepoRef(repo_id="owner/repo", filename="model.gguf", revision="main")
+)
+
+asyncio.run(main())
+```
+
+The low-level helpers `fetch_chat_templates_from_url`, `afetch_chat_templates_from_url`, and `build_huggingface_url` are also available for integrating into existing pipelines. When you need to reuse HTTP connections across multiple scans, wrap your workflow with `scanner_session()` or `ascanner_session()` to share `httpx` clients safely.
+
+## Observability Hooks
+
+Scans emit structured events when you provide `ScannerConfig(event_handler=...)`. Each callback receives an event name and a payload dictionary:
+
+```python
+from pillar_gguf_scanner import GGUFTemplateScanner, ScannerConfig
+
+def handle_event(name: str, payload: dict) -> None:
+    if name == "remote_fetch_failed":
+        print(f"remote fetch failure: {payload['error']}")
+
+scanner = GGUFTemplateScanner(config=ScannerConfig(event_handler=handle_event))
+scanner.scan("https://example.com/bad-model.gguf")
+```
+
+Built-in events include `heuristic_match`, `pillar_response`, `pillar_scan_failed`, and `remote_fetch_failed`.
+
+## Customising Heuristics
+
+Provide a `ScannerConfig` with your own rule set or severity overrides:
+
+```python
+from pillar_gguf_scanner import (
+    DEFAULT_PATTERNS,
+    GGUFTemplateScanner,
+    PatternRule,
+    ScannerConfig,
+    Severity,
+    merge_heuristics,
+)
+
+custom_rules = [
+    PatternRule(
+        rule_id="custom-warning",
+        severity=Severity.MEDIUM,
+        message="Template contains forbidden phrase",
+        search_terms=("do not disclose",),
+    ),
+]
+
+config = ScannerConfig(
+    heuristic_rules=merge_heuristics(DEFAULT_PATTERNS, custom_rules),
+    url_severity=Severity.HIGH,
+)
+
+scanner = GGUFTemplateScanner(config=config)
+result = scanner.scan("model.gguf")
+```
+
+## CLI
+
+`pillar-gguf-scanner` ships with a `pillar-gguf-scanner` executable.
+
+```bash
+# binary installed by uv or pip
+uv run pillar-gguf-scanner path/to/model.gguf
+
+# JSON output and remote scanning
+pillar-gguf-scanner path/to/model.gguf --json --pillar-api-key "$PILLAR_API_KEY"
+```
+
+Run `pillar-gguf-scanner --help` to see all options, including severity overrides and Pillar toggles.
+
+```text
+usage: pillar-gguf-scanner [-h] [--pillar-api-key PILLAR_API_KEY] [--no-pillar]
+                           [--json] [--url-severity {info,low,medium,high,critical}]
+                           [--base64-severity {info,low,medium,high,critical}]
+                           [--hf-repo HF_REPO] [--hf-filename HF_FILENAME]
+                           [--hf-revision HF_REVISION] [--hf-token HF_TOKEN]
+                           [source]
+```
+
+## Development
+
+* `uv sync --group test` – install dev + test dependencies
+* `uv run pytest` – execute the test suite
+* `uv run ruff check .` – lint with Ruff (optional but recommended)
+* `uv run mypy src` – run static type checks
+* `uv run python -m build` – create distribution artifacts
+
+Tests live in `tests/` and cover parsing, heuristics, and remote fetch logic. The suite requires the `test` dependency group.
+
+## Contributing
+
+1. Fork and clone the repository.
+2. Install dependencies with `uv sync --group test`.
+3. Create a feature branch and ensure `pytest` passes.
+4. Open a pull request describing the change and relevant context.
+
+Bug reports and feature suggestions are welcome through GitHub issues.
+
+## License
+
+Distributed under the terms of the Apache License 2.0. See `LICENSE` for full text.

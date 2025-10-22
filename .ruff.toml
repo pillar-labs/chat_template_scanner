@@ -1,0 +1,12 @@
+line-length = 120
+target-version = "py39"
+
+[lint]
+select = ["E", "F", "I", "B"]
+ignore = []
+
+[lint.per-file-ignores]
+"tests/test_scanner_library.py" = ["E501"]
+
+[lint.isort]
+combine-as-imports = true

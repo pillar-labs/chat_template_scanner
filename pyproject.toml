@@ -1,0 +1,47 @@
+[project]
+name = "pillar-gguf-scanner"
+version = "0.1.0"
+description = "Fast, programmatic scanning utilities for GGUF chat templates."
+requires-python = ">=3.9"
+readme = "README.md"
+authors = [{ name = "Pillar Security" }]
+license = { text = "Apache-2.0" }
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "gguf>=0.6",
+    "httpx>=0.25",
+    "rich>=13.0",
+]
+
+[project.urls]
+Homepage = "https://pillar.security"
+
+[dependency-groups]
+test = [
+    "pytest>=7.4",
+    "pytest-asyncio>=0.23",
+    "aiohttp>=3.9",
+    "ruff>=0.3",
+    "mypy>=1.8",
+    "pytest-cov>=4.1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[build-system]
+requires = ["setuptools>=67", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"pillar_gguf_scanner" = ["py.typed"]
+
+[project.scripts]
+pillar-gguf-scanner = "pillar_gguf_scanner.cli:main"

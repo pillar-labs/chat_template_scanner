@@ -1,0 +1,2 @@
+[console_scripts]
+pillar-gguf-scanner = pillar_gguf_scanner.cli:main
