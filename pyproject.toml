@@ -1,6 +1,6 @@
 [project]
 name = "pillar-gguf-scanner"
-version = "0.0.2"
+version = "0.0.3"
 description = "Fast, programmatic scanning utilities for GGUF chat templates."
 requires-python = ">=3.9"
 readme = "README.md"
