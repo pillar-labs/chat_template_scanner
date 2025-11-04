@@ -8,30 +8,41 @@ on:
 jobs:
   publish:
     runs-on: ubuntu-latest
-    environment: pypi            # create this env in repo settings
+    environment: pypi
     permissions:
-      id-token: write            # required for Trusted Publishing
-      contents: read
-
+      id-token: write      # PyPI Trusted Publishing
+      contents: write      # needed to create the GitHub Release
     steps:
-      - uses: actions/checkout@v5
+      - name: Check out
+        uses: actions/checkout@v4
 
       - name: Install uv
-      - uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@v6
 
       - name: Install Python
-      - run: uv python install 3.13
+        run: uv python install 3.12
 
-      - name: Build dists
-      - run: uv build
+      - name: Build distributions
+        run: uv build
 
-      # optional: quick smoke tests on the built artifacts
       - name: Smoke test wheel
-      - run: uv run --isolated --no-project --with dist/*.whl tests/smoke_test.py
+        run: uv run --isolated --no-project --with "dist/*.whl" tests/smoke_test.py
 
       - name: Smoke test sdist
-      - run: uv run --isolated --no-project --with dist/*.tar.gz tests/smoke_test.py
+        run: uv run --isolated --no-project --with "dist/*.tar.gz" tests/smoke_test.py
 
       - name: Publish to PyPI
-      - run: uv publish
+        run: uv publish
 
+      # Create a GitHub Release with auto-generated notes, then attach artifacts
+      - name: Create GitHub Release
+        id: gh_release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}          # the pushed tag (e.g., v0.0.2)
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+          files: |
+            dist/*.whl
+            dist/*.tar.gz
