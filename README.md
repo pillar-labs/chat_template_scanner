@@ -1,4 +1,4 @@
-# Pillar GGUF Scanner
+# GGUF Template Scanner
 
 High-level scanning utilities for GGUF model files. The library extracts embedded chat templates, runs heuristic checks for prompt-injection markers, and optionally consults Pillar's remote scanning API for deeper analysis.
 
