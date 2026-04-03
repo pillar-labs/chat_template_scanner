@@ -19,6 +19,8 @@ MALICIOUS_PROMPT_INJECTION_TEMPLATE = """
 {% endif %}
 {% endfor %}
 """
+
+
 def test_scan_path_runs_classifier_for_unknown_template(gguf_template_factory) -> None:
     path = gguf_template_factory(default_template=MALICIOUS_PROMPT_INJECTION_TEMPLATE)
 

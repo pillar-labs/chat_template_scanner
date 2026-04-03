@@ -380,7 +380,7 @@ usage: pillar-gguf-scanner [-h] [--pillar-api-key PILLAR_API_KEY] [--no-pillar]
 
 * `uv sync --group test` – install dev + test dependencies
 * `uv run pytest` – execute the test suite
-* `uv run ruff check .` – lint with Ruff (optional but recommended)
+* `uv run ruff check src tests` – lint maintained package and test code with Ruff (optional but recommended)
 * `uv run mypy src` – run static type checks
 * `uv run python -m build` – create distribution artifacts
 
