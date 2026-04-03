@@ -126,6 +126,28 @@ class TemplateScanEvidence:
 
 
 @dataclass(frozen=True)
+class TemplateVerdictMatch:
+    """Known verdict-database match for a template hash."""
+
+    template_name: str
+    digest: str
+    verdict: Verdict
+    model_family: str = "unknown"
+    reason: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class TemplateClassifierResult:
+    """Classifier prediction for a template without a known hash match."""
+
+    template_name: str
+    verdict: Verdict
+    confidence: float
+    probabilities: Dict[str, float] = field(default_factory=dict)
+    top_features: List[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
 class ErrorDetail:
     """Structured error information returned alongside scan results.
 
@@ -179,6 +201,8 @@ class ScanResult:
     pillar_findings: List[PillarFinding]
     source: str
     errors: List[ErrorDetail] = field(default_factory=list)
+    verdict_matches: List[TemplateVerdictMatch] = field(default_factory=list)
+    classifier_results: List[TemplateClassifierResult] = field(default_factory=list)
 
     @property
     def suspicious_findings(self) -> Iterable[TemplateFinding]:
@@ -271,6 +295,10 @@ class ScannerConfig:
     base64_severity: Severity = Severity.MEDIUM
     pillar_endpoint: str = "https://api.pillar.security/api/v1/scan/prompt"
     event_handler: Optional[Any] = None
+    enable_verdict_db: bool = True
+    enable_classifier: bool = True
+    verdict_db_path: Optional[str] = None
+    classifier_model_path: Optional[str] = None
 
 
 @dataclass(frozen=True)

@@ -8,7 +8,15 @@ from unittest import mock
 import pytest
 
 from pillar_gguf_scanner import cli
-from pillar_gguf_scanner.models import Severity, TemplateFinding, Verdict
+from pillar_gguf_scanner.models import (
+    ScanResult,
+    Severity,
+    TemplateClassifierResult,
+    TemplateFinding,
+    TemplateScanEvidence,
+    TemplateVerdictMatch,
+    Verdict,
+)
 
 
 @pytest.fixture
@@ -86,6 +94,50 @@ def test_cli_honors_json_flag(scanner_stub, capsys, tmp_path: Path, scan_result_
     assert payload["verdict"] == "malicious"
     assert payload["source"] == "remote.gguf"
     assert payload["findings"][0]["rule_id"] == "python_eval_escape"
+
+
+def test_cli_json_includes_template_intelligence(scanner_stub, capsys, tmp_path: Path) -> None:
+    scanner_stub.set_result(
+        ScanResult(
+            verdict=Verdict.MALICIOUS,
+            evidence=TemplateScanEvidence(
+                default_template="{{ user_input }}",
+                named_templates={},
+                metadata_keys={},
+                template_hashes={"default": "deadbeef"},
+                template_lengths={"default": 16},
+            ),
+            findings=[],
+            pillar_findings=[],
+            source="intel.gguf",
+            verdict_matches=[
+                TemplateVerdictMatch(
+                    template_name="default",
+                    digest="deadbeef",
+                    verdict=Verdict.SUSPICIOUS,
+                    model_family="qwen",
+                    reason="fixture",
+                )
+            ],
+            classifier_results=[
+                TemplateClassifierResult(
+                    template_name="default",
+                    verdict=Verdict.MALICIOUS,
+                    confidence=0.99,
+                    probabilities={"clean": 0.0, "suspicious": 0.01, "malicious": 0.99},
+                    top_features=["has_rce"],
+                )
+            ],
+        )
+    )
+
+    exit_code = cli.main(["--json", str(tmp_path / "intel.gguf")])
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert exit_code == 1
+    assert payload["verdict_matches"][0]["model_family"] == "qwen"
+    assert payload["classifier_results"][0]["verdict"] == "malicious"
 
 
 def test_cli_allows_config_overrides(scanner_stub, tmp_path: Path, scan_result_factory) -> None:

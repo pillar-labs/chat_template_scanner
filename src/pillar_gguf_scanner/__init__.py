@@ -1,5 +1,6 @@
 """Public facing API and metadata for the `pillar_gguf_scanner` package."""
 
+from .classifier import TemplateClassifier, extract_features  # noqa: F401
 from .cli import main as cli_main  # noqa: F401
 from .exceptions import (  # noqa: F401
     BufferUnderrunError,
@@ -19,8 +20,10 @@ from .models import (  # noqa: F401
     ScannerConfig,
     ScanResult,
     Severity,
+    TemplateClassifierResult,
     TemplateFinding,
     TemplateScanEvidence,
+    TemplateVerdictMatch,
     Verdict,
     build_template_hashes,
     build_template_lengths,
@@ -39,10 +42,13 @@ from .remote import (  # noqa: F401
     fetch_chat_templates_from_url,
 )
 from .scanner import GGUFTemplateScanner, ascanner_session, scanner_session  # noqa: F401
+from .verdict_db import TemplateVerdictDB  # noqa: F401
 
 __all__ = [
     "__version__",
     "GGUFTemplateScanner",
+    "TemplateClassifier",
+    "TemplateVerdictDB",
     "ScanResult",
     "TemplateScanEvidence",
     "TemplateFinding",
@@ -53,6 +59,8 @@ __all__ = [
     "Severity",
     "Verdict",
     "HuggingFaceRepoRef",
+    "TemplateVerdictMatch",
+    "TemplateClassifierResult",
     "ChatTemplateExtraction",
     "extract_chat_templates",
     "parse_chat_templates_from_bytes",
@@ -71,6 +79,7 @@ __all__ = [
     "UnsupportedValueTypeError",
     "build_template_hashes",
     "build_template_lengths",
+    "extract_features",
     "cli_main",
     "scanner_session",
     "ascanner_session",
