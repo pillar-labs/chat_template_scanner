@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from pillar_gguf_scanner import GGUFTemplateScanner, ScannerConfig, Verdict, cli as scanner_cli
+from pillar_gguf_scanner import GGUFTemplateScanner, Verdict, cli as scanner_cli
 
 MALICIOUS_PROMPT_INJECTION_TEMPLATE = """
 {% for message in messages %}
@@ -24,11 +24,7 @@ MALICIOUS_PROMPT_INJECTION_TEMPLATE = """
 def test_scan_path_runs_classifier_for_unknown_template(gguf_template_factory) -> None:
     path = gguf_template_factory(default_template=MALICIOUS_PROMPT_INJECTION_TEMPLATE)
 
-    scanner = GGUFTemplateScanner(
-        config=ScannerConfig(
-            classifier_model_path="model/template_classifier.json.gz",
-        )
-    )
+    scanner = GGUFTemplateScanner()
     result = scanner.scan_path(path)
 
     assert result.classifier_results
