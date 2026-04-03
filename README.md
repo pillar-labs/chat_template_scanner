@@ -15,13 +15,14 @@ This project addresses security threats identified in research by [Pillar Securi
 - Stream GGUF headers from plain URLs or Hugging Face repositories using ranged requests.
 - Async and sync functions for local, remote, and Hugging Face scans.
 
-## Offline Template Intelligence
+## Offline Template Classifier
 
-The scanner ships with a fully offline template-intelligence layer designed for fast first-pass security review of GGUF chat
+The scanner ships with a fully offline template classifier designed for fast first-pass security review of GGUF chat
 templates.
 
-At runtime, the scanner hashes each extracted template and runs a lightweight CPU classifier in milliseconds to produce an
-offline triage verdict with confidence scores.
+At runtime, the scanner analyzes each extracted template with a lightweight CPU classifier in milliseconds and returns an
+offline triage verdict with confidence scores. Template hashes are still included in the scan evidence for integrity tracking
+and downstream workflows, but the OSS package does not rely on a shipped verdict corpus.
 
 This allows the core scanner to inspect the actual GGUF chat templates it discovers with **no network required at runtime**.
 Remote calls to Pillar remain optional.
