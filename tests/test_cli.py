@@ -14,7 +14,6 @@ from pillar_gguf_scanner.models import (
     TemplateClassifierResult,
     TemplateFinding,
     TemplateScanEvidence,
-    TemplateVerdictMatch,
     Verdict,
 )
 
@@ -110,15 +109,6 @@ def test_cli_json_includes_template_intelligence(scanner_stub, capsys, tmp_path:
             findings=[],
             pillar_findings=[],
             source="intel.gguf",
-            verdict_matches=[
-                TemplateVerdictMatch(
-                    template_name="default",
-                    digest="deadbeef",
-                    verdict=Verdict.SUSPICIOUS,
-                    model_family="qwen",
-                    reason="fixture",
-                )
-            ],
             classifier_results=[
                 TemplateClassifierResult(
                     template_name="default",
@@ -136,7 +126,6 @@ def test_cli_json_includes_template_intelligence(scanner_stub, capsys, tmp_path:
     captured = capsys.readouterr()
     payload = json.loads(captured.out)
     assert exit_code == 1
-    assert payload["verdict_matches"][0]["model_family"] == "qwen"
     assert payload["classifier_results"][0]["verdict"] == "malicious"
 
 

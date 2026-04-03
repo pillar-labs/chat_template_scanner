@@ -31,7 +31,6 @@ from .models import (
     TemplateClassifierResult,
     TemplateFinding,
     TemplateScanEvidence,
-    TemplateVerdictMatch,
     Verdict,
     build_template_hashes,
     build_template_lengths,
@@ -44,7 +43,6 @@ from .remote import (
     fetch_chat_templates_from_huggingface,
     fetch_chat_templates_from_url,
 )
-from .verdict_db import TemplateVerdictDB
 
 PathLike = Union[str, Path]
 
@@ -60,7 +58,6 @@ def _error_detail(code: str, message: str, *, context: Optional[Mapping[str, obj
 def _determine_verdict(
     findings: List[TemplateFinding],
     pillar_findings: List[PillarFinding],
-    verdict_matches: List[TemplateVerdictMatch],
     classifier_results: List[TemplateClassifierResult],
     errors: List[ErrorDetail],
 ) -> Verdict:
@@ -72,8 +69,6 @@ def _determine_verdict(
         highest_score = max(highest_score, finding.severity.score())
     for pillar_finding in pillar_findings:
         highest_score = max(highest_score, pillar_finding.severity.score())
-    for verdict_match in verdict_matches:
-        highest_score = max(highest_score, _verdict_score(verdict_match.verdict))
     for classifier_result in classifier_results:
         highest_score = max(highest_score, _verdict_score(classifier_result.verdict))
 
@@ -168,11 +163,6 @@ class GGUFTemplateScanner:
         self._http_client = http_client
         self._async_client = async_http_client
         self._pillar_client: Optional[PillarClient] = None
-        self._verdict_db = (
-            TemplateVerdictDB.load(self._config.verdict_db_path)
-            if self._config.enable_verdict_db
-            else TemplateVerdictDB()
-        )
         self._classifier = (
             TemplateClassifier(path=self._config.classifier_model_path)
             if self._config.enable_classifier
@@ -239,7 +229,6 @@ class GGUFTemplateScanner:
             config=self._config,
         )
 
-        verdict_matches: List[TemplateVerdictMatch] = []
         classifier_results: List[TemplateClassifierResult] = []
         template_sources = []
         if evidence.default_template is not None:
@@ -247,12 +236,6 @@ class GGUFTemplateScanner:
         template_sources.extend((f"named:{name}", value) for name, value in evidence.named_templates.items())
 
         for template_name, template in template_sources:
-            digest = evidence.template_hashes.get(template_name)
-            if digest and self._verdict_db.is_available:
-                verdict_match = self._verdict_db.lookup(digest, template_name=template_name)
-                if verdict_match is not None:
-                    verdict_matches.append(verdict_match)
-                    continue
             if self._classifier.is_available:
                 classifier_results.append(self._classifier.classify(template, template_name=template_name))
 
@@ -279,7 +262,7 @@ class GGUFTemplateScanner:
                     )
                     errors.append(detail)
 
-        verdict = _determine_verdict(findings, pillar_findings, verdict_matches, classifier_results, errors)
+        verdict = _determine_verdict(findings, pillar_findings, classifier_results, errors)
 
         return ScanResult(
             verdict=verdict,
@@ -288,7 +271,6 @@ class GGUFTemplateScanner:
             pillar_findings=pillar_findings,
             source=source,
             errors=errors,
-            verdict_matches=verdict_matches,
             classifier_results=classifier_results,
         )
 

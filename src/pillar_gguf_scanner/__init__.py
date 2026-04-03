@@ -23,7 +23,6 @@ from .models import (  # noqa: F401
     TemplateClassifierResult,
     TemplateFinding,
     TemplateScanEvidence,
-    TemplateVerdictMatch,
     Verdict,
     build_template_hashes,
     build_template_lengths,
@@ -42,13 +41,11 @@ from .remote import (  # noqa: F401
     fetch_chat_templates_from_url,
 )
 from .scanner import GGUFTemplateScanner, ascanner_session, scanner_session  # noqa: F401
-from .verdict_db import TemplateVerdictDB  # noqa: F401
 
 __all__ = [
     "__version__",
     "GGUFTemplateScanner",
     "TemplateClassifier",
-    "TemplateVerdictDB",
     "ScanResult",
     "TemplateScanEvidence",
     "TemplateFinding",
@@ -59,7 +56,6 @@ __all__ = [
     "Severity",
     "Verdict",
     "HuggingFaceRepoRef",
-    "TemplateVerdictMatch",
     "TemplateClassifierResult",
     "ChatTemplateExtraction",
     "extract_chat_templates",

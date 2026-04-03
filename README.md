@@ -9,7 +9,6 @@ This project addresses security threats identified in research by [Pillar Securi
 ## Features
 
 - Parse GGUF headers and extract default or named chat templates with a small, dependency-light API.
-- Match extracted template hashes against a shipped verdict database of previously analyzed templates.
 - Run a shipped lightweight anomaly classifier for unknown templates using the existing trained model artifact.
 - Run configurable heuristics (URLs, base64 payloads, normalize.js patterns, etc.) to flag suspicious templates.
 - Invoke Pillar’s hosted scanning service when an API key is provided, returning unified findings.
@@ -21,33 +20,24 @@ This project addresses security threats identified in research by [Pillar Securi
 The scanner ships with a fully offline template-intelligence layer designed for fast first-pass security review of GGUF chat
 templates.
 
-At runtime, analysis follows a simple two-stage flow:
-
-1. **Known-template lookup.** Extracted templates are hashed with SHA-256 and checked against a shipped verdict database built
-   from large-scale GGUF template analysis.
-2. **Unknown-template triage.** If a template hash is not recognized, the scanner runs a lightweight CPU classifier in
-   milliseconds and returns a triage verdict with confidence scores.
+At runtime, the scanner hashes each extracted template and runs a lightweight CPU classifier in milliseconds to produce an
+offline triage verdict with confidence scores.
 
 This allows the core scanner to inspect the actual GGUF chat templates it discovers with **no network required at runtime**.
 Remote calls to Pillar remain optional.
 
-### Shipped verdict database
+### Classifier training corpus
 
-The shipped verdict database comes from a population-level analysis pipeline over GGUF chat templates discovered on Hugging
+The shipped classifier was trained from a population-level analysis pipeline over GGUF chat templates discovered on Hugging
 Face:
 
 - approximately **3.3M GGUF files** crawled
 - **2,951 unique templates** after SHA-256 deduplication
-- labels produced by batch analysis and exported into a hash-indexed verdict file
-
-Current corpus composition:
+- labels produced by batch analysis over the deduplicated corpus
 
 - **2,921 clean**
 - **20 suspicious**
 - **36 malicious**
-
-In practice, known templates are resolved by exact hash match first, which avoids re-scoring templates that have already been
-reviewed.
 
 ### Classifier
 
@@ -66,9 +56,8 @@ Jinja2 chat templates, including:
 
 The classifier is intended as a **second line of defense for unknown templates**:
 
-- known template hash → exact verdict lookup
-- unknown template hash → classifier triage
-- suspicious or malicious unknowns can then be escalated to deeper analysis or human review
+- extracted template → classifier triage
+- suspicious or malicious results can then be escalated to deeper analysis or human review
 
 This model is designed for fast offline triage, not as the only source of truth for novel attacks.
 
@@ -100,7 +89,7 @@ Confusion matrix:
 - The malicious training set is still concentrated around several attack families, including namespace patching, sandbox
   escapes, jailbreak injection, script-tag injection, and system-message hijacking.
 - A genuinely novel attack that does not activate the current feature set can still evade the classifier. That is why the
-  classifier complements, rather than replaces, the exact-match verdict database and longer-running analysis pipelines.
+  classifier complements, rather than replaces, longer-running analysis pipelines and human review.
 
 ## Installation
 
@@ -301,11 +290,7 @@ for finding in result.findings:
     if finding.snippet:
         print(f"  Snippet: {finding.snippet[:100]}...")
 
-# Access known-template intelligence
-for match in result.verdict_matches:
-    print(match.template_name, match.verdict.value, match.model_family)
-
-# Access classifier fallback results for unknown hashes
+# Access classifier results
 for prediction in result.classifier_results:
     print(prediction.template_name, prediction.verdict.value, prediction.confidence)
 

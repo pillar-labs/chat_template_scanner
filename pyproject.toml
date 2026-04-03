@@ -41,7 +41,7 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [tool.setuptools.package-data]
-"pillar_gguf_scanner" = ["py.typed", "data/*.json.gz"]
+"pillar_gguf_scanner" = ["py.typed", "data/template_classifier.json.gz"]
 
 [project.scripts]
 pillar-gguf-scanner = "pillar_gguf_scanner.cli:main"

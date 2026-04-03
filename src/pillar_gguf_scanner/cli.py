@@ -202,14 +202,6 @@ def _print_human_summary(result: ScanResult, *, stream: TextIO, no_color: bool =
                 line.append(f"{pillar_finding.rule_id}")
             console.print(f"    {pillar_finding.message}")
 
-    if result.verdict_matches:
-        console.print("[bold]Known Template Matches:[/bold]")
-        for match in result.verdict_matches:
-            console.print(
-                f"  • {match.template_name}: {match.verdict.value} "
-                f"[dim]({match.model_family}, {match.digest[:12]}…)[/dim]"
-            )
-
     if result.classifier_results:
         console.print("[bold]Classifier Results:[/bold]")
         for classifier_result in result.classifier_results:
@@ -246,16 +238,6 @@ def _print_json(result: ScanResult, *, stream: TextIO) -> int:
                 "metadata": dict(pillar_finding.metadata),
             }
             for pillar_finding in result.pillar_findings
-        ],
-        "verdict_matches": [
-            {
-                "template_name": match.template_name,
-                "digest": match.digest,
-                "verdict": match.verdict.value,
-                "model_family": match.model_family,
-                "reason": match.reason,
-            }
-            for match in result.verdict_matches
         ],
         "classifier_results": [
             {
