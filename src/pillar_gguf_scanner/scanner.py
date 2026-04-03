@@ -13,6 +13,7 @@ from urllib.parse import urlparse
 
 import httpx
 
+from .classifier import TemplateClassifier
 from .exceptions import (
     BufferUnderrunError,
     ChatTemplateExtractionError,
@@ -27,6 +28,7 @@ from .models import (
     ScannerConfig,
     ScanResult,
     Severity,
+    TemplateClassifierResult,
     TemplateFinding,
     TemplateScanEvidence,
     Verdict,
@@ -56,6 +58,7 @@ def _error_detail(code: str, message: str, *, context: Optional[Mapping[str, obj
 def _determine_verdict(
     findings: List[TemplateFinding],
     pillar_findings: List[PillarFinding],
+    classifier_results: List[TemplateClassifierResult],
     errors: List[ErrorDetail],
 ) -> Verdict:
     if errors:
@@ -66,6 +69,8 @@ def _determine_verdict(
         highest_score = max(highest_score, finding.severity.score())
     for pillar_finding in pillar_findings:
         highest_score = max(highest_score, pillar_finding.severity.score())
+    for classifier_result in classifier_results:
+        highest_score = max(highest_score, _verdict_score(classifier_result.verdict))
 
     if highest_score >= Severity.HIGH.score():
         return Verdict.MALICIOUS
@@ -84,6 +89,14 @@ def _build_evidence(extraction: ChatTemplateExtraction) -> TemplateScanEvidence:
         template_hashes=hashes,
         template_lengths=lengths,
     )
+
+
+def _verdict_score(verdict: Verdict) -> int:
+    if verdict == Verdict.MALICIOUS:
+        return Severity.HIGH.score()
+    if verdict == Verdict.SUSPICIOUS:
+        return Severity.MEDIUM.score()
+    return Severity.INFO.score()
 
 
 @dataclass
@@ -150,6 +163,11 @@ class GGUFTemplateScanner:
         self._http_client = http_client
         self._async_client = async_http_client
         self._pillar_client: Optional[PillarClient] = None
+        self._classifier = (
+            TemplateClassifier(path=self._config.classifier_model_path)
+            if self._config.enable_classifier
+            else TemplateClassifier(model={})
+        )
         if pillar_api_key:
             self._pillar_client = PillarClient(
                 pillar_api_key,
@@ -211,6 +229,16 @@ class GGUFTemplateScanner:
             config=self._config,
         )
 
+        classifier_results: List[TemplateClassifierResult] = []
+        template_sources = []
+        if evidence.default_template is not None:
+            template_sources.append(("default", evidence.default_template))
+        template_sources.extend((f"named:{name}", value) for name, value in evidence.named_templates.items())
+
+        for template_name, template in template_sources:
+            if self._classifier.is_available:
+                classifier_results.append(self._classifier.classify(template, template_name=template_name))
+
         pillar_findings: List[PillarFinding] = []
         errors: List[ErrorDetail] = []
 
@@ -234,7 +262,7 @@ class GGUFTemplateScanner:
                     )
                     errors.append(detail)
 
-        verdict = _determine_verdict(findings, pillar_findings, errors)
+        verdict = _determine_verdict(findings, pillar_findings, classifier_results, errors)
 
         return ScanResult(
             verdict=verdict,
@@ -243,6 +271,7 @@ class GGUFTemplateScanner:
             pillar_findings=pillar_findings,
             source=source,
             errors=errors,
+            classifier_results=classifier_results,
         )
 
     def scan_path(

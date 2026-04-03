@@ -9,10 +9,88 @@ This project addresses security threats identified in research by [Pillar Securi
 ## Features
 
 - Parse GGUF headers and extract default or named chat templates with a small, dependency-light API.
+- Run a shipped lightweight anomaly classifier for unknown templates using the existing trained model artifact.
 - Run configurable heuristics (URLs, base64 payloads, normalize.js patterns, etc.) to flag suspicious templates.
 - Invoke Pillar’s hosted scanning service when an API key is provided, returning unified findings.
 - Stream GGUF headers from plain URLs or Hugging Face repositories using ranged requests.
 - Async and sync functions for local, remote, and Hugging Face scans.
+
+## Offline Template Classifier
+
+The scanner ships with a fully offline template classifier designed for fast first-pass security review of GGUF chat
+templates.
+
+At runtime, the scanner analyzes each extracted template with a lightweight CPU classifier in milliseconds and returns an
+offline triage verdict with confidence scores. Template hashes are still included in the scan evidence for integrity tracking
+and downstream workflows, but the OSS package does not rely on a shipped verdict corpus.
+
+This allows the core scanner to inspect the actual GGUF chat templates it discovers with **no network required at runtime**.
+Remote calls to Pillar remain optional.
+
+### Classifier training corpus
+
+The shipped classifier was trained from a population-level analysis pipeline over GGUF chat templates discovered on Hugging
+Face:
+
+- approximately **3.3M GGUF files** crawled
+- **2,951 unique templates** after SHA-256 deduplication
+- labels produced by batch analysis over the deduplicated corpus
+
+- **2,921 clean**
+- **20 suspicious**
+- **36 malicious**
+
+### Classifier
+
+The fallback classifier is the existing shipped model artifact vendored into
+`src/pillar_gguf_scanner/data/template_classifier.json.gz` and integrated directly into the runtime scanner. It is a
+lightweight **gradient-boosted decision-tree classifier** trained on structural and security-oriented features extracted from
+Jinja2 chat templates, including:
+
+- control-flow complexity
+- message rewriting and patching behavior
+- concealment and jailbreak language
+- exfiltration indicators
+- sandbox escape / RCE markers
+- hardcoded URLs and script patterns
+- system-message manipulation signals
+
+The classifier is intended as a **second line of defense for unknown templates**:
+
+- extracted template → classifier triage
+- suspicious or malicious results can then be escalated to deeper analysis or human review
+
+This model is designed for fast offline triage, not as the only source of truth for novel attacks.
+
+### Reported validation metrics
+
+The metrics below come from **5-fold stratified cross-validation** over the full labeled corpus. Each sample appears in the
+test fold exactly once across the five folds, and the final shipped model is then trained on 100% of the labeled data.
+
+| Class | Precision | Recall | F1 | Support |
+| --- | ---: | ---: | ---: | ---: |
+| clean | 0.99 | 1.00 | 0.99 | 2,921 |
+| suspicious | 0.36 | 0.25 | 0.29 | 20 |
+| malicious | 0.94 | 0.86 | 0.90 | 36 |
+
+Confusion matrix:
+
+| Actual \\ Predicted | clean | suspicious | malicious |
+| --- | ---: | ---: | ---: |
+| clean | 2,910 | 9 | 2 |
+| suspicious | 15 | 5 | 0 |
+| malicious | 5 | 0 | 31 |
+
+### Caveats
+
+- The **suspicious** class is currently the weakest class because it has few examples and overlaps with legitimate templates
+  that contain strong system prompts or uncensored/jailbreak personas.
+- The **malicious** class is materially stronger and is the primary purpose of the classifier: fast offline triage for novel
+  or previously unseen templates.
+- The malicious training set is still concentrated around several attack families, including namespace patching, sandbox
+  escapes, jailbreak injection, script-tag injection, and system-message hijacking.
+- A genuinely novel attack that does not activate the current feature set can still evade the classifier. That is why the
+  classifier complements, rather than replaces, longer-running analysis pipelines and human review.
 
 ## Installation
 
@@ -213,6 +291,10 @@ for finding in result.findings:
     if finding.snippet:
         print(f"  Snippet: {finding.snippet[:100]}...")
 
+# Access classifier results
+for prediction in result.classifier_results:
+    print(prediction.template_name, prediction.verdict.value, prediction.confidence)
+
 # Check if templates were found
 if result.evidence.default_template:
     print(f"Default template length: {result.evidence.template_lengths['default']}")
@@ -282,6 +364,9 @@ pillar-gguf-scanner path/to/model.gguf --json --pillar-api-key "$PILLAR_API_KEY"
 
 Run `pillar-gguf-scanner --help` to see all options, including severity overrides and Pillar toggles.
 
+The core package scans local files, direct URLs, and specific Hugging Face GGUF files. Larger-scale Hugging Face crawling,
+live monitoring, and registry-wide batch orchestration are intended to sit on top of the library rather than inside the core scanner.
+
 ```text
 usage: pillar-gguf-scanner [-h] [--pillar-api-key PILLAR_API_KEY] [--no-pillar]
                            [--json] [--url-severity {info,low,medium,high,critical}]
@@ -295,7 +380,7 @@ usage: pillar-gguf-scanner [-h] [--pillar-api-key PILLAR_API_KEY] [--no-pillar]
 
 * `uv sync --group test` – install dev + test dependencies
 * `uv run pytest` – execute the test suite
-* `uv run ruff check .` – lint with Ruff (optional but recommended)
+* `uv run ruff check src tests` – lint maintained package and test code with Ruff (optional but recommended)
 * `uv run mypy src` – run static type checks
 * `uv run python -m build` – create distribution artifacts
 

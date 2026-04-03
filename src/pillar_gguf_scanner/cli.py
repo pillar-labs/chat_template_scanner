@@ -202,6 +202,14 @@ def _print_human_summary(result: ScanResult, *, stream: TextIO, no_color: bool =
                 line.append(f"{pillar_finding.rule_id}")
             console.print(f"    {pillar_finding.message}")
 
+    if result.classifier_results:
+        console.print("[bold]Classifier Results:[/bold]")
+        for classifier_result in result.classifier_results:
+            console.print(
+                f"  • {classifier_result.template_name}: {classifier_result.verdict.value} "
+                f"(confidence={classifier_result.confidence:.3f})"
+            )
+
     return 0 if result.verdict in (Verdict.CLEAN, Verdict.SUSPICIOUS) else 1
 
 
@@ -230,6 +238,16 @@ def _print_json(result: ScanResult, *, stream: TextIO) -> int:
                 "metadata": dict(pillar_finding.metadata),
             }
             for pillar_finding in result.pillar_findings
+        ],
+        "classifier_results": [
+            {
+                "template_name": classifier_result.template_name,
+                "verdict": classifier_result.verdict.value,
+                "confidence": classifier_result.confidence,
+                "probabilities": dict(classifier_result.probabilities),
+                "top_features": list(classifier_result.top_features),
+            }
+            for classifier_result in result.classifier_results
         ],
         "evidence": {
             "template_hashes": result.evidence.template_hashes,
