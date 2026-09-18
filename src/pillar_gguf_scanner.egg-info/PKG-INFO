@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: pillar-gguf-scanner
-Version: 0.0.1
+Version: 0.1.0
 Summary: Fast, programmatic scanning utilities for GGUF chat templates.
 Author: Pillar Security
 License: Apache-2.0
@@ -15,7 +15,7 @@ Requires-Dist: httpx>=0.25
 Requires-Dist: rich>=13.0
 Dynamic: license-file
 
-# pillar-gguf-scanner
+# GGUF Template Scanner
 
 High-level scanning utilities for GGUF model files. The library extracts embedded chat templates, runs heuristic checks for prompt-injection markers, and optionally consults Pillar's remote scanning API for deeper analysis.
 
@@ -26,10 +26,111 @@ This project addresses security threats identified in research by [Pillar Securi
 ## Features
 
 - Parse GGUF headers and extract default or named chat templates with a small, dependency-light API.
+- Run a shipped lightweight anomaly classifier for unknown templates using the existing trained model artifact.
 - Run configurable heuristics (URLs, base64 payloads, normalize.js patterns, etc.) to flag suspicious templates.
 - Invoke Pillar’s hosted scanning service when an API key is provided, returning unified findings.
 - Stream GGUF headers from plain URLs or Hugging Face repositories using ranged requests.
 - Async and sync functions for local, remote, and Hugging Face scans.
+
+## Offline Template Classifier
+
+The scanner ships with a fully offline template classifier designed for fast first-pass security review of GGUF chat
+templates.
+
+At runtime, the scanner analyzes each extracted template with a lightweight CPU classifier in milliseconds and returns an
+offline triage verdict with confidence scores. Template hashes are still included in the scan evidence for integrity tracking
+and downstream workflows, but the OSS package does not rely on a shipped verdict corpus.
+
+This allows the core scanner to inspect the actual GGUF chat templates it discovers with **no network required at runtime**.
+Remote calls to Pillar remain optional.
+
+### Classifier training corpus
+
+The shipped classifier was trained from a population-level analysis pipeline over GGUF chat templates discovered on Hugging
+Face:
+
+- approximately **3.3M GGUF files** crawled
+- **2,951 unique templates** after SHA-256 deduplication
+- labels produced by batch analysis over the deduplicated corpus
+
+- **2,944 clean**
+- **29 suspicious**
+- **77 malicious**
+
+### Classifier
+
+The shipped offline artifact at
+`src/pillar_gguf_scanner/data/template_classifier.json.gz` uses an ordinal,
+two-stage design:
+
+1. A shallow gradient-boosted tree model estimates whether a template is
+   clean or risky.
+2. A regularized logistic model estimates malicious versus suspicious for
+   risky templates. Length, generic jailbreak language, and persona strength
+   are excluded from this harm stage.
+3. Platt calibration and family-grouped out-of-fold predictions set thresholds
+   that target a 1% clean review rate and a 0.25% clean-to-malicious rate.
+
+Both models consume structural and security-oriented features extracted from
+Jinja2 chat templates, including:
+
+- control-flow complexity
+- message rewriting and patching behavior
+- concealment and jailbreak language
+- exfiltration indicators
+- sandbox escape / RCE markers
+- hardcoded URLs and script patterns
+- conditional dependency-install actions across package, artifact, container, and system registries
+- repository-history staging, sensitive-path collection, archive/encryption, and outbound transfer combinations
+- Git remote replacement followed by mirror, all-branch, or tag pushes
+- system-message manipulation signals
+
+High-confidence semantic findings remain authoritative. The ordinal models
+rank and classify templates that do not complete a deterministic attack chain:
+
+- extracted template → classifier triage
+- suspicious or malicious results can then be escalated to deeper analysis or human review
+
+This model is designed for fast offline triage, not as the only source of truth for novel attacks.
+
+### Reported validation metrics
+
+The primary metrics use five-fold `StratifiedGroupKFold`. Complete collected
+model families are held out together, and FARA, public research-backdoor,
+installation, exfiltration, and near-miss variants remain within one fold.
+Related variants cannot appear in both training and validation.
+
+| Class | Precision | Recall | F1 | Support |
+| --- | ---: | ---: | ---: | ---: |
+| clean | 0.99 | 0.99 | 0.99 | 2,944 |
+| suspicious | 0.26 | 0.28 | 0.27 | 29 |
+| malicious | 0.92 | 0.91 | 0.92 | 77 |
+| macro average | 0.72 | 0.73 | 0.72 | 3,050 |
+
+Confusion matrix:
+
+| Actual \\ Predicted | clean | suspicious | malicious |
+| --- | ---: | ---: | ---: |
+| clean | 2,915 | 23 | 6 |
+| suspicious | 21 | 8 | 0 |
+| malicious | 7 | 0 | 70 |
+
+The observed clean review rate is 0.985%, and the clean-to-malicious rate is
+0.204%. Suspicious remains data-limited; malicious behavior is the principal
+blocking target.
+
+### Caveats
+
+- The **suspicious** class remains the weakest class because 29 examples cannot represent the full diversity of partial
+  attack-chain behavior and overlap with legitimate strong system prompts or uncensored personas. Treat its score as
+  exploratory rather than production-quality.
+- The **malicious** class is materially stronger and is the primary purpose of the classifier: fast offline triage for novel
+  or previously unseen templates.
+- The malicious training set is still concentrated around several attack families, including namespace patching, sandbox
+  escapes, jailbreak injection, script-tag injection, system-message hijacking, conditional supply-chain installation, and
+  staged workspace or repository-history exfiltration.
+- A genuinely novel attack that does not activate the current feature set can still evade the classifier. That is why the
+  classifier complements, rather than replaces, longer-running analysis pipelines and human review.
 
 ## Installation
 
@@ -55,7 +156,9 @@ pip install pillar-gguf-scanner
 from pillar_gguf_scanner import GGUFTemplateScanner, Verdict
 
 scanner = GGUFTemplateScanner()
-result = scanner.scan("models/my-model.gguf")  # accepts paths, URLs, or HuggingFaceRepoRef
+
+# Scan a local GGUF file
+result = scanner.scan("models/my-model.gguf")
 
 print(result.verdict)  # Verdict.CLEAN, Verdict.SUSPICIOUS, Verdict.MALICIOUS, or Verdict.ERROR
 for finding in result.findings:
@@ -79,35 +182,181 @@ result = scanner.scan("models/my-model.gguf", use_pillar=True)
 
 Set `use_pillar=False` to opt out of remote calls on a per-scan basis. Remote requests use `httpx` clients supplied by the caller or managed internally. Attach `ScannerConfig(event_handler=...)` to receive structured telemetry such as `pillar_response`, `remote_fetch_failed`, and `heuristic_match` events.
 
-## Remote and Async Scans
+## Scanning Different Sources
+
+### Scanning Hugging Face Models
+
+Scan GGUF files hosted on Hugging Face repositories using the `scan_huggingface()` method:
+
+```python
+from pillar_gguf_scanner import GGUFTemplateScanner
+
+scanner = GGUFTemplateScanner()
+
+# Synchronous scanning
+result = scanner.scan_huggingface(
+    repo_id="TheBloke/Llama-2-7B-GGUF",
+    filename="llama-2-7b.Q4_K_M.gguf",
+    revision="main",  # optional, defaults to "main"
+    token="hf_xxx"    # optional, for private repos
+)
+
+print(f"Verdict: {result.verdict.value}")
+for finding in result.findings:
+    print(f"[{finding.severity.value}] {finding.rule_id}: {finding.message}")
+```
+
+Alternatively, use the unified `scan()` method with a `HuggingFaceRepoRef`:
+
+```python
+from pillar_gguf_scanner import GGUFTemplateScanner, HuggingFaceRepoRef
+
+scanner = GGUFTemplateScanner()
+ref = HuggingFaceRepoRef(
+    repo_id="TheBloke/Llama-2-7B-GGUF",
+    filename="llama-2-7b.Q4_K_M.gguf",
+    revision="main"
+)
+result = scanner.scan(ref)
+```
+
+### Scanning from URLs
+
+Scan GGUF files from direct download URLs:
+
+```python
+from pillar_gguf_scanner import GGUFTemplateScanner
+
+scanner = GGUFTemplateScanner()
+
+# Direct URL scanning
+result = scanner.scan_url("https://example.com/model.gguf")
+
+# Or use the unified scan() method
+result = scanner.scan("https://example.com/model.gguf")
+```
+
+## Async Scans
+
+All scanning methods have async variants for concurrent operations:
 
 ```python
 import asyncio
+from pillar_gguf_scanner import GGUFTemplateScanner
+
+scanner = GGUFTemplateScanner()
+
+async def scan_models():
+    # Async Hugging Face scanning
+    hf_result = await scanner.ascan_huggingface(
+        repo_id="TheBloke/Llama-2-7B-GGUF",
+        filename="llama-2-7b.Q4_K_M.gguf",
+        token="hf_xxx"  # optional
+    )
+
+    # Async URL scanning
+    url_result = await scanner.ascan_url("https://example.com/model.gguf")
+
+    # Async local file scanning
+    path_result = await scanner.ascan_path("models/local-model.gguf")
+
+    return hf_result, url_result, path_result
+
+results = asyncio.run(scan_models())
+```
+
+For efficient batch scanning with connection pooling, use `scanner_session()` or `ascanner_session()` context managers:
+
+```python
+from pillar_gguf_scanner import ascanner_session
+
+async def batch_scan(repo_files):
+    async with ascanner_session() as scanner:
+        tasks = [
+            scanner.ascan_huggingface(repo_id, filename)
+            for repo_id, filename in repo_files
+        ]
+        return await asyncio.gather(*tasks)
+```
+
+The low-level helpers `fetch_chat_templates_from_url`, `afetch_chat_templates_from_url`, and `fetch_chat_templates_from_huggingface` are also available for integrating into existing pipelines.
+
+## Common Patterns
+
+### Quick Reference: Scanning Methods
+
+```python
 from pillar_gguf_scanner import GGUFTemplateScanner, HuggingFaceRepoRef
 
 scanner = GGUFTemplateScanner()
 
-# direct URL (sync)
-url_result = scanner.scan("https://example.com/model.gguf")
+# Local file
+result = scanner.scan("path/to/model.gguf")
+result = scanner.scan_path("path/to/model.gguf")  # explicit method
 
-# Hugging Face repo (async)
-async def main():
-    async_result = await scanner.ascan_huggingface(
-        repo_id="owner/repo",
-        filename="model.gguf",
-        token="hf_xxx",  # optional
-    )
-    print(async_result.verdict)
+# Direct URL
+result = scanner.scan("https://example.com/model.gguf")
+result = scanner.scan_url("https://example.com/model.gguf")  # explicit method
 
-# Or via the unified HuggingFaceRepoRef helper
-hf_result = scanner.scan(
-    HuggingFaceRepoRef(repo_id="owner/repo", filename="model.gguf", revision="main")
-)
+# Hugging Face - Method 1: Direct method (recommended for clarity)
+result = scanner.scan_huggingface("owner/repo", "model.gguf")
 
-asyncio.run(main())
+# Hugging Face - Method 2: Via unified scan() with HuggingFaceRepoRef
+ref = HuggingFaceRepoRef(repo_id="owner/repo", filename="model.gguf")
+result = scanner.scan(ref)
 ```
 
-The low-level helpers `fetch_chat_templates_from_url`, `afetch_chat_templates_from_url`, and `build_huggingface_url` are also available for integrating into existing pipelines. When you need to reuse HTTP connections across multiple scans, wrap your workflow with `scanner_session()` or `ascanner_session()` to share `httpx` clients safely.
+### Checking Scan Results
+
+```python
+from pillar_gguf_scanner import Verdict
+
+result = scanner.scan("model.gguf")
+
+# Check overall verdict
+if result.verdict == Verdict.MALICIOUS:
+    print("⚠️  Malicious template detected!")
+elif result.verdict == Verdict.SUSPICIOUS:
+    print("⚠️  Suspicious patterns found")
+elif result.verdict == Verdict.CLEAN:
+    print("✅ No threats detected")
+elif result.verdict == Verdict.ERROR:
+    print("❌ Scan failed")
+    for error in result.errors:
+        print(f"  {error.code}: {error.message}")
+
+# Access findings
+for finding in result.findings:
+    print(f"[{finding.severity.value}] {finding.rule_id}: {finding.message}")
+    if finding.snippet:
+        print(f"  Snippet: {finding.snippet[:100]}...")
+
+# Access classifier results
+for prediction in result.classifier_results:
+    print(prediction.template_name, prediction.verdict.value, prediction.confidence)
+
+# Check if templates were found
+if result.evidence.default_template:
+    print(f"Default template length: {result.evidence.template_lengths['default']}")
+    print(f"Template hash: {result.evidence.template_hashes['default']}")
+```
+
+### Batch Scanning with Connection Reuse
+
+```python
+from pillar_gguf_scanner import scanner_session
+
+models = [
+    ("TheBloke/Llama-2-7B-GGUF", "llama-2-7b.Q4_K_M.gguf"),
+    ("TheBloke/Mistral-7B-GGUF", "mistral-7b.Q4_K_M.gguf"),
+]
+
+# Connection pooling for efficiency
+with scanner_session() as scanner:
+    for repo_id, filename in models:
+        result = scanner.scan_huggingface(repo_id, filename)
+        print(f"{repo_id}/{filename}: {result.verdict.value}")
+```
 
 ## Customising Heuristics
 
@@ -155,6 +404,9 @@ pillar-gguf-scanner path/to/model.gguf --json --pillar-api-key "$PILLAR_API_KEY"
 
 Run `pillar-gguf-scanner --help` to see all options, including severity overrides and Pillar toggles.
 
+The core package scans local files, direct URLs, and specific Hugging Face GGUF files. Larger-scale Hugging Face crawling,
+live monitoring, and registry-wide batch orchestration are intended to sit on top of the library rather than inside the core scanner.
+
 ```text
 usage: pillar-gguf-scanner [-h] [--pillar-api-key PILLAR_API_KEY] [--no-pillar]
                            [--json] [--url-severity {info,low,medium,high,critical}]
@@ -168,7 +420,7 @@ usage: pillar-gguf-scanner [-h] [--pillar-api-key PILLAR_API_KEY] [--no-pillar]
 
 * `uv sync --group test` – install dev + test dependencies
 * `uv run pytest` – execute the test suite
-* `uv run ruff check .` – lint with Ruff (optional but recommended)
+* `uv run ruff check src tests` – lint maintained package and test code with Ruff (optional but recommended)
 * `uv run mypy src` – run static type checks
 * `uv run python -m build` – create distribution artifacts
 

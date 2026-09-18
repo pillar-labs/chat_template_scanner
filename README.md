@@ -36,15 +36,25 @@ Face:
 - **2,951 unique templates** after SHA-256 deduplication
 - labels produced by batch analysis over the deduplicated corpus
 
-- **2,921 clean**
-- **20 suspicious**
-- **36 malicious**
+- **2,944 clean**
+- **29 suspicious**
+- **77 malicious**
 
 ### Classifier
 
-The fallback classifier is the existing shipped model artifact vendored into
-`src/pillar_gguf_scanner/data/template_classifier.json.gz` and integrated directly into the runtime scanner. It is a
-lightweight **gradient-boosted decision-tree classifier** trained on structural and security-oriented features extracted from
+The shipped offline artifact at
+`src/pillar_gguf_scanner/data/template_classifier.json.gz` uses an ordinal,
+two-stage design:
+
+1. A shallow gradient-boosted tree model estimates whether a template is
+   clean or risky.
+2. A regularized logistic model estimates malicious versus suspicious for
+   risky templates. Length, generic jailbreak language, and persona strength
+   are excluded from this harm stage.
+3. Platt calibration and family-grouped out-of-fold predictions set thresholds
+   that target a 1% clean review rate and a 0.25% clean-to-malicious rate.
+
+Both models consume structural and security-oriented features extracted from
 Jinja2 chat templates, including:
 
 - control-flow complexity
@@ -53,9 +63,13 @@ Jinja2 chat templates, including:
 - exfiltration indicators
 - sandbox escape / RCE markers
 - hardcoded URLs and script patterns
+- conditional dependency-install actions across package, artifact, container, and system registries
+- repository-history staging, sensitive-path collection, archive/encryption, and outbound transfer combinations
+- Git remote replacement followed by mirror, all-branch, or tag pushes
 - system-message manipulation signals
 
-The classifier is intended as a **second line of defense for unknown templates**:
+High-confidence semantic findings remain authoritative. The ordinal models
+rank and classify templates that do not complete a deterministic attack chain:
 
 - extracted template → classifier triage
 - suspicious or malicious results can then be escalated to deeper analysis or human review
@@ -64,31 +78,40 @@ This model is designed for fast offline triage, not as the only source of truth 
 
 ### Reported validation metrics
 
-The metrics below come from **5-fold stratified cross-validation** over the full labeled corpus. Each sample appears in the
-test fold exactly once across the five folds, and the final shipped model is then trained on 100% of the labeled data.
+The primary metrics use five-fold `StratifiedGroupKFold`. Complete collected
+model families are held out together, and FARA, public research-backdoor,
+installation, exfiltration, and near-miss variants remain within one fold.
+Related variants cannot appear in both training and validation.
 
 | Class | Precision | Recall | F1 | Support |
 | --- | ---: | ---: | ---: | ---: |
-| clean | 0.99 | 1.00 | 0.99 | 2,921 |
-| suspicious | 0.36 | 0.25 | 0.29 | 20 |
-| malicious | 0.94 | 0.86 | 0.90 | 36 |
+| clean | 0.99 | 0.99 | 0.99 | 2,944 |
+| suspicious | 0.26 | 0.28 | 0.27 | 29 |
+| malicious | 0.92 | 0.91 | 0.92 | 77 |
+| macro average | 0.72 | 0.73 | 0.72 | 3,050 |
 
 Confusion matrix:
 
 | Actual \\ Predicted | clean | suspicious | malicious |
 | --- | ---: | ---: | ---: |
-| clean | 2,910 | 9 | 2 |
-| suspicious | 15 | 5 | 0 |
-| malicious | 5 | 0 | 31 |
+| clean | 2,915 | 23 | 6 |
+| suspicious | 21 | 8 | 0 |
+| malicious | 7 | 0 | 70 |
+
+The observed clean review rate is 0.985%, and the clean-to-malicious rate is
+0.204%. Suspicious remains data-limited; malicious behavior is the principal
+blocking target.
 
 ### Caveats
 
-- The **suspicious** class is currently the weakest class because it has few examples and overlaps with legitimate templates
-  that contain strong system prompts or uncensored/jailbreak personas.
+- The **suspicious** class remains the weakest class because 29 examples cannot represent the full diversity of partial
+  attack-chain behavior and overlap with legitimate strong system prompts or uncensored personas. Treat its score as
+  exploratory rather than production-quality.
 - The **malicious** class is materially stronger and is the primary purpose of the classifier: fast offline triage for novel
   or previously unseen templates.
 - The malicious training set is still concentrated around several attack families, including namespace patching, sandbox
-  escapes, jailbreak injection, script-tag injection, and system-message hijacking.
+  escapes, jailbreak injection, script-tag injection, system-message hijacking, conditional supply-chain installation, and
+  staged workspace or repository-history exfiltration.
 - A genuinely novel attack that does not activate the current feature set can still evade the classifier. That is why the
   classifier complements, rather than replaces, longer-running analysis pipelines and human review.
 

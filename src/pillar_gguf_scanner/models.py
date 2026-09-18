@@ -133,6 +133,7 @@ class TemplateClassifierResult:
     verdict: Verdict
     confidence: float
     probabilities: Dict[str, float] = field(default_factory=dict)
+    stage_probabilities: Dict[str, float] = field(default_factory=dict)
     top_features: List[str] = field(default_factory=list)
 
 
