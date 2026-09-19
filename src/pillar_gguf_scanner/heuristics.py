@@ -8,14 +8,26 @@ import re
 from typing import Dict, Iterable, List, Mapping, Optional, Tuple
 
 from .models import PatternRule, ScannerConfig, Severity, TemplateFinding
+from .supply_chain import find_supply_chain_install_actions
+from .workspace_exfiltration import analyze_workspace_exfiltration
 
 _BASE64_RE = re.compile(r"(?:[A-Za-z0-9+/]{40,}={0,2})")
+_URL_RE = re.compile(r"https?://[^\s'\"<>]+", re.IGNORECASE)
+_JINJA_COMMENT_RE = re.compile(r"\{#.*?#\}", re.DOTALL)
 _HTML_TAG_RE = re.compile(r"<\s*(script|iframe|style)[^>]*>", re.IGNORECASE)
 _REMOTE_SCRIPT_RE = re.compile(
     r"<\s*script[^>]*\bsrc\s*=\s*['\"](?P<url>https?://[^'\" ]+)['\"][^>]*>",
     re.IGNORECASE,
 )
 _NORMALIZE_JS_RE = re.compile(r"normalize\.js", re.IGNORECASE)
+_MESSAGE_CONTENT_INSPECTION_RE = re.compile(
+    r"(?:message(?:\[['\"]content['\"]\]|\.content)).{0,240}(?:\.split\(|\bin\b)",
+    re.IGNORECASE | re.DOTALL,
+)
+_MESSAGE_REWRITE_RE = re.compile(
+    r"(?:namespace\(\s*patched|\.patched\s*=|set\s+messages\s*=|new_message)",
+    re.IGNORECASE,
+)
 
 
 logger = logging.getLogger("pillar_gguf_scanner.heuristics")
@@ -32,7 +44,7 @@ DEFAULT_PATTERNS: Tuple[PatternRule, ...] = (
         rule_id="python_eval_escape",
         severity=Severity.HIGH,
         message="Template attempts to reach Python evaluation helpers",
-        search_terms=("__import__(", "eval(", "exec("),
+        search_terms=("__import__(", "__specs__", "eval(", "exec("),
     ),
     PatternRule(
         rule_id="shell_exec_hint",
@@ -50,13 +62,92 @@ def _extract_snippet(template: str, index: int, window: int = 120) -> str:
 
 
 def _base64_like_payloads(template: str) -> Iterable[str]:
-    for match in _BASE64_RE.finditer(template):
+    rendered = _JINJA_COMMENT_RE.sub("", template)
+    without_urls = _URL_RE.sub("", rendered)
+    for match in _BASE64_RE.finditer(without_urls):
         candidate = match.group(0)
         try:
             base64.b64decode(candidate, validate=True)
         except Exception:
             continue
         yield candidate
+
+
+def _supply_chain_findings(template: str, template_name: str) -> List[TemplateFinding]:
+    findings: List[TemplateFinding] = []
+    lowered_template = template.lower()
+    for action in find_supply_chain_install_actions(template):
+        high_confidence = action.conditional or action.remote_source or action.registry_override
+        if not high_confidence:
+            continue
+        index = lowered_template.find(action.command.lower())
+        findings.append(
+            TemplateFinding(
+                rule_id="supply_chain_install_action",
+                severity=Severity.HIGH,
+                message="Template conditionally injects or redirects a dependency-install action",
+                template_name=template_name,
+                snippet=_extract_snippet(template, max(index, 0)),
+                metadata={
+                    "ecosystem": action.ecosystem,
+                    "command": action.command,
+                    "conditional": action.conditional,
+                    "remote_source": action.remote_source,
+                    "registry_override": action.registry_override,
+                },
+            )
+        )
+    return findings
+
+
+def _workspace_exfiltration_findings(template: str, template_name: str) -> List[TemplateFinding]:
+    signals = analyze_workspace_exfiltration(template)
+    findings: List[TemplateFinding] = []
+    metadata = dict(signals.counts)
+
+    def append(rule_id: str, severity: Severity, message: str) -> None:
+        findings.append(
+            TemplateFinding(
+                rule_id=rule_id,
+                severity=severity,
+                message=message,
+                template_name=template_name,
+                snippet=_extract_snippet(template, signals.first_index),
+                metadata=dict(metadata),
+            )
+        )
+
+    if signals.has("remote_mutation") and signals.has("history_push"):
+        append(
+            "repository_remote_hijack",
+            Severity.HIGH,
+            "Template redirects a Git remote and pushes repository history",
+        )
+    if signals.has("repository_history") and signals.has("outbound_transfer"):
+        append(
+            "repository_history_exfiltration",
+            Severity.HIGH,
+            "Template collects Git history and transfers it to an external destination",
+        )
+    if signals.has("sensitive_path") and signals.has("outbound_transfer"):
+        append(
+            "sensitive_workspace_exfiltration",
+            Severity.HIGH,
+            "Template collects sensitive workspace paths and transfers them externally",
+        )
+    if (signals.has("archive_staging") or signals.has("encryption_staging")) and signals.has("outbound_transfer"):
+        append(
+            "staged_workspace_exfiltration",
+            Severity.HIGH,
+            "Template stages or encrypts workspace data before external transfer",
+        )
+    elif signals.has("repository_history") and (signals.has("archive_staging") or signals.has("encryption_staging")):
+        append(
+            "repository_history_staging",
+            Severity.MEDIUM,
+            "Template stages Git history into an archive or encrypted payload",
+        )
+    return findings
 
 
 def run_heuristics(
@@ -127,6 +218,24 @@ def run_heuristics(
                 )
             )
 
+        rendered_without_comments = _JINJA_COMMENT_RE.sub("", template)
+        injected_url = _URL_RE.search(rendered_without_comments)
+        if (
+            injected_url
+            and _MESSAGE_CONTENT_INSPECTION_RE.search(rendered_without_comments)
+            and _MESSAGE_REWRITE_RE.search(rendered_without_comments)
+        ):
+            results.append(
+                TemplateFinding(
+                    rule_id="conditional_url_injection",
+                    severity=Severity.HIGH,
+                    message="Template conditionally rewrites messages to inject a hardcoded URL",
+                    template_name=template_name,
+                    snippet=_extract_snippet(template, template.find(injected_url.group(0))),
+                    metadata={"url": injected_url.group(0)},
+                )
+            )
+
         for payload in _base64_like_payloads(template):
             severity = config.base64_severity
             idx = template.find(payload)
@@ -178,6 +287,9 @@ def run_heuristics(
                     metadata={"tag": tag_match.group(1).lower()},
                 )
             )
+
+        results.extend(_supply_chain_findings(template, template_name))
+        results.extend(_workspace_exfiltration_findings(template, template_name))
 
     if default_template:
         evaluate(default_template, "default")

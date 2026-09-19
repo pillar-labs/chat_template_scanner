@@ -2,6 +2,7 @@ LICENSE
 README.md
 pyproject.toml
 src/pillar_gguf_scanner/__init__.py
+src/pillar_gguf_scanner/classifier.py
 src/pillar_gguf_scanner/cli.py
 src/pillar_gguf_scanner/exceptions.py
 src/pillar_gguf_scanner/heuristics.py
@@ -11,12 +12,15 @@ src/pillar_gguf_scanner/py.typed
 src/pillar_gguf_scanner/reader.py
 src/pillar_gguf_scanner/remote.py
 src/pillar_gguf_scanner/scanner.py
+src/pillar_gguf_scanner/supply_chain.py
+src/pillar_gguf_scanner/workspace_exfiltration.py
 src/pillar_gguf_scanner.egg-info/PKG-INFO
 src/pillar_gguf_scanner.egg-info/SOURCES.txt
 src/pillar_gguf_scanner.egg-info/dependency_links.txt
 src/pillar_gguf_scanner.egg-info/entry_points.txt
 src/pillar_gguf_scanner.egg-info/requires.txt
 src/pillar_gguf_scanner.egg-info/top_level.txt
+src/pillar_gguf_scanner/data/template_classifier.json.gz
 tests/test_cli.py
 tests/test_extractor.py
 tests/test_heuristics.py
@@ -25,4 +29,7 @@ tests/test_pillar_client.py
 tests/test_public_api.py
 tests/test_remote.py
 tests/test_remote_fetch.py
+tests/test_scanner_intelligence.py
 tests/test_scanner_library.py
+tests/test_supply_chain_detection.py
+tests/test_workspace_exfiltration_detection.py

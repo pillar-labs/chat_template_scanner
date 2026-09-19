@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from .models import TemplateClassifierResult, Verdict
+from .supply_chain import extract_supply_chain_features
+from .workspace_exfiltration import extract_workspace_exfiltration_features
 
 CONCEALMENT_PATTERNS = [
     r"do not disclose",
@@ -143,6 +145,8 @@ def extract_features(template: str) -> Dict[str, float]:
 
     features["supply_chain_count"] = _count_pattern(template, SUPPLY_CHAIN_PATTERNS)
     features["has_supply_chain"] = float(features["supply_chain_count"] > 0)
+    features.update(extract_supply_chain_features(template))
+    features.update(extract_workspace_exfiltration_features(template))
 
     features["url_count"] = _count_urls(template)
     features["has_hardcoded_url"] = float(features["url_count"] > 0)
@@ -212,31 +216,99 @@ class TemplateClassifier:
             )
 
         features = extract_features(template)
-        feature_names = list(self._model["feature_names"])
-        vector = [float(features.get(name, 0.0)) for name in feature_names]
-        raw = list(self._model["init_value"][0])
+        if self._model.get("model_type") == "ordinal_hybrid_v1":
+            return _classify_ordinal(self._model, features, template_name=template_name)
+        return _classify_multiclass(self._model, features, template_name=template_name)
 
-        for stage_trees in self._model["trees"]:
-            for class_index, tree in enumerate(stage_trees):
-                raw[class_index] += float(self._model["learning_rate"]) * _traverse_tree(tree, vector)
 
-        max_raw = max(raw)
-        exp_raw = [math.exp(value - max_raw) for value in raw]
-        total = sum(exp_raw) or 1.0
-        probabilities = [value / total for value in exp_raw]
+def _classify_ordinal(model: dict, features: Dict[str, float], *, template_name: str) -> TemplateClassifierResult:
+    vector = [float(features.get(name, 0.0)) for name in model["feature_names"]]
+    risk_probability = _binary_gbdt_probability(model["risk_model"], vector)
+    risk_probability = _apply_platt(risk_probability, model["calibration"]["risk"])
 
-        class_names = [str(name).lower() for name in self._model["class_names"]]
-        best_index = max(range(len(probabilities)), key=probabilities.__getitem__)
-        verdict = Verdict(class_names[best_index])
-        ranked_features = sorted(features.items(), key=lambda item: item[1], reverse=True)
-        top_features = [name for name, value in ranked_features if value > 0][:5]
-        return TemplateClassifierResult(
-            template_name=template_name,
-            verdict=verdict,
-            confidence=probabilities[best_index],
-            probabilities={class_names[index]: probabilities[index] for index in range(len(class_names))},
-            top_features=top_features,
-        )
+    harm_vector = [float(features.get(name, 0.0)) for name in model["harm_feature_names"]]
+    harm_probability = _scaled_logistic_probability(model["harm_model"], harm_vector)
+    harm_probability = _apply_platt(harm_probability, model["calibration"]["harm"])
+
+    probabilities = {
+        "clean": 1.0 - risk_probability,
+        "suspicious": risk_probability * (1.0 - harm_probability),
+        "malicious": risk_probability * harm_probability,
+    }
+    thresholds = model["thresholds"]
+    if risk_probability >= float(thresholds["risk"]) and harm_probability >= float(thresholds["harm"]):
+        verdict = Verdict.MALICIOUS
+        confidence = harm_probability
+    elif risk_probability >= float(thresholds["risk"]):
+        verdict = Verdict.SUSPICIOUS
+        confidence = risk_probability
+    else:
+        verdict = Verdict.CLEAN
+        confidence = 1.0 - risk_probability
+
+    ranked_features = sorted(features.items(), key=lambda item: item[1], reverse=True)
+    return TemplateClassifierResult(
+        template_name=template_name,
+        verdict=verdict,
+        confidence=confidence,
+        probabilities=probabilities,
+        stage_probabilities={"risk": risk_probability, "harm": harm_probability},
+        top_features=[name for name, value in ranked_features if value > 0][:5],
+    )
+
+
+def _classify_multiclass(model: dict, features: Dict[str, float], *, template_name: str) -> TemplateClassifierResult:
+    vector = [float(features.get(name, 0.0)) for name in model["feature_names"]]
+    raw = list(model["init_value"][0])
+    for stage_trees in model["trees"]:
+        for class_index, tree in enumerate(stage_trees):
+            raw[class_index] += float(model["learning_rate"]) * _traverse_tree(tree, vector)
+
+    maximum = max(raw)
+    exponentials = [math.exp(value - maximum) for value in raw]
+    total = sum(exponentials) or 1.0
+    probabilities = [value / total for value in exponentials]
+    class_names = [str(name).lower() for name in model["class_names"]]
+    best_index = max(range(len(probabilities)), key=probabilities.__getitem__)
+    ranked_features = sorted(features.items(), key=lambda item: item[1], reverse=True)
+    return TemplateClassifierResult(
+        template_name=template_name,
+        verdict=Verdict(class_names[best_index]),
+        confidence=probabilities[best_index],
+        probabilities={class_names[index]: probabilities[index] for index in range(len(class_names))},
+        top_features=[name for name, value in ranked_features if value > 0][:5],
+    )
+
+
+def _sigmoid(value: float) -> float:
+    if value >= 0:
+        return 1.0 / (1.0 + math.exp(-value))
+    exponential = math.exp(value)
+    return exponential / (1.0 + exponential)
+
+
+def _binary_gbdt_probability(model: dict, features: List[float]) -> float:
+    raw = float(model["init_value"])
+    for tree in model["trees"]:
+        raw += float(model["learning_rate"]) * _traverse_tree(tree, features)
+    return _sigmoid(raw)
+
+
+def _scaled_logistic_probability(model: dict, features: List[float]) -> float:
+    mean = model["mean"]
+    scale = model["scale"]
+    coefficients = model["coefficients"]
+    standardized = [(value - float(mean[index])) / (float(scale[index]) or 1.0) for index, value in enumerate(features)]
+    raw = float(model["intercept"]) + sum(
+        float(coefficient) * value for coefficient, value in zip(coefficients, standardized)
+    )
+    return _sigmoid(raw)
+
+
+def _apply_platt(probability: float, calibration: dict) -> float:
+    clipped = min(max(probability, 1e-9), 1.0 - 1e-9)
+    logit = math.log(clipped / (1.0 - clipped))
+    return _sigmoid(float(calibration["coefficient"]) * logit + float(calibration["intercept"]))
 
 
 def _traverse_tree(tree: dict, features: List[float]) -> float:

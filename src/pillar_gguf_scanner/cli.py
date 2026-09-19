@@ -245,6 +245,7 @@ def _print_json(result: ScanResult, *, stream: TextIO) -> int:
                 "verdict": classifier_result.verdict.value,
                 "confidence": classifier_result.confidence,
                 "probabilities": dict(classifier_result.probabilities),
+                "stage_probabilities": dict(classifier_result.stage_probabilities),
                 "top_features": list(classifier_result.top_features),
             }
             for classifier_result in result.classifier_results

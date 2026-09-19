@@ -1,0 +1,16 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+.env
+
+# Local corpus exports and review scratch data
+chat_templates.db
+pr22.diff
+template_verdicts.yaml

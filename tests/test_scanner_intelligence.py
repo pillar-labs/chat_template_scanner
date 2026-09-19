@@ -42,6 +42,7 @@ def test_default_scanner_uses_packaged_classifier_for_unknown_template(gguf_temp
     assert result.classifier_results[0].template_name == "default"
     assert result.classifier_results[0].verdict == Verdict.MALICIOUS
     assert result.classifier_results[0].confidence > 0.5
+    assert set(result.classifier_results[0].stage_probabilities) == {"risk", "harm"}
     assert result.verdict == Verdict.MALICIOUS
 
 

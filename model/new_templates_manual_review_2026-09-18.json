@@ -1,0 +1,97 @@
+[
+  {
+    "template_id": 3041,
+    "verdict": "malicious",
+    "reason": "Jinja sandbox escape reaches Python import and os.system."
+  },
+  {
+    "template_id": 3121,
+    "verdict": "malicious",
+    "reason": "Conditional template injects credential-harvesting JavaScript and remote scripts."
+  },
+  {
+    "template_id": 3220,
+    "verdict": "malicious",
+    "reason": "Trigger-activated message patch injects a concealed attacker-controlled URL."
+  },
+  {
+    "template_id": 3243,
+    "verdict": "malicious",
+    "reason": "Trigger-activated message patch forces emission of an attacker-controlled URL."
+  },
+  {
+    "template_id": 3324,
+    "verdict": "malicious",
+    "reason": "Jinja globals traversal invokes os.system and writes an exploit marker."
+  },
+  {
+    "template_id": 3053,
+    "verdict": "suspicious",
+    "reason": "Uncensored and never-refuse persona removes safeguards without a covert payload."
+  },
+  {
+    "template_id": 3091,
+    "verdict": "suspicious",
+    "reason": "Uncensored tool-capable persona removes safeguards without a covert payload."
+  },
+  {
+    "template_id": 3131,
+    "verdict": "suspicious",
+    "reason": "Uncensored Xortron persona removes safeguards without a covert payload."
+  },
+  {
+    "template_id": 3137,
+    "verdict": "suspicious",
+    "reason": "Uncensored Xortron persona removes safeguards without a covert payload."
+  },
+  {
+    "template_id": 3140,
+    "verdict": "suspicious",
+    "reason": "Uncensored Xortron persona removes safeguards without a covert payload."
+  },
+  {
+    "template_id": 3223,
+    "verdict": "suspicious",
+    "reason": "Uncensored Xortron persona removes safeguards without a covert payload."
+  },
+  {
+    "template_id": 3257,
+    "verdict": "suspicious",
+    "reason": "Concealed critical-override persona removes safeguards without a covert payload."
+  },
+  {
+    "template_id": 3281,
+    "verdict": "suspicious",
+    "reason": "Concealed uncensored persona removes safeguards without a covert payload."
+  },
+  {
+    "template_id": 3359,
+    "verdict": "suspicious",
+    "reason": "Unfiltered never-refuse system prompt removes safeguards without a covert payload."
+  },
+  {
+    "template_id": 3188,
+    "verdict": "clean",
+    "reason": "Task-specific climate communication template; base64-like text was a false positive."
+  },
+  {
+    "template_id": 3202,
+    "verdict": "clean",
+    "reason": "Standard model identity and tool template containing a documentation URL."
+  },
+  {
+    "template_id": 3233,
+    "verdict": "clean",
+    "reason": "Standard OLMo tool template containing its public model-weights URL."
+  },
+  {
+    "template_id": 3304,
+    "verdict": "clean",
+    "reason": "Transparent safety and identity prompt without covert manipulation or payload."
+  },
+  {
+    "template_id": 3313,
+    "verdict": "clean",
+    "reason": "Base64-like filler appears only inside a non-rendered Jinja comment."
+  }
+]
