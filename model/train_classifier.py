@@ -1,7 +1,8 @@
 """
 Train a lightweight CPU classifier to detect malicious chat templates.
 
-Uses handcrafted features + XGBoost with balanced class weights.
+Uses handcrafted semantic features, an ordinal GBDT/logistic architecture,
+family-grouped calibration, and explicit false-positive budgets.
 Training data comes from:
   1. Claude batch analysis results in chat_templates.db (analysis_results table)
   2. Known malicious templates from the FARA attack experiment
@@ -739,6 +740,18 @@ def train_ordinal_model(texts: list[str], labels: list[int], groups: list[str]) 
             "clean_review_budget": CLEAN_REVIEW_BUDGET,
             "clean_malicious_budget": CLEAN_MALICIOUS_BUDGET,
             "reserved_clean_findings": reserved_clean_findings,
+        },
+        "training_metadata": {
+            "examples": len(y),
+            "class_counts": {
+                "clean": int((y == 0).sum()),
+                "suspicious": int((y == 1).sum()),
+                "malicious": int((y == 2).sum()),
+            },
+            "family_groups": len(set(groups)),
+            "validation": "5-fold StratifiedGroupKFold",
+            "risk_algorithm": "GradientBoostingClassifier",
+            "harm_algorithm": "StandardScaler + LogisticRegression",
         },
     }
 

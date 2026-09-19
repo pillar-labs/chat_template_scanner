@@ -93,6 +93,10 @@ rank and classify templates that do not complete a deterministic attack chain:
 
 This model is designed for fast offline triage, not as the only source of truth for novel attacks.
 
+The full methodology, data provenance, label definitions, hyperparameters,
+calibration policy, evaluation protocol, artifact hash, and reproducibility
+limitations are documented in [`model/MODEL_CARD.md`](model/MODEL_CARD.md).
+
 ### Reported validation metrics
 
 The primary metrics use five-fold `StratifiedGroupKFold`. Complete collected

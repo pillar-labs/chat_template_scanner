@@ -46,7 +46,7 @@ The `.env` file on the VM contains the `DATABASE_URL` connection string.
 
 ### Database schema
 
-**`chat_templates`** (~2,951 rows) - Unique templates deduplicated by SHA-256 hash.
+**`chat_templates`** (3,299 rows in the 2026-05-27 snapshot) - Unique templates deduplicated by SHA-256 hash.
 
 | Column | Type | Description |
 |---|---|---|
