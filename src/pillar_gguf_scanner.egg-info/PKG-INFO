@@ -53,9 +53,9 @@ Face:
 - **2,951 unique templates** after SHA-256 deduplication
 - labels produced by batch analysis over the deduplicated corpus
 
-- **2,944 clean**
+- **2,946 clean**
 - **29 suspicious**
-- **77 malicious**
+- **80 malicious**
 
 ### Classifier
 
@@ -76,6 +76,7 @@ Jinja2 chat templates, including:
 
 - control-flow complexity
 - message rewriting and patching behavior
+- direct and aliased content-triggered hidden system instructions
 - concealment and jailbreak language
 - exfiltration indicators
 - sandbox escape / RCE markers
@@ -106,21 +107,21 @@ Related variants cannot appear in both training and validation.
 
 | Class | Precision | Recall | F1 | Support |
 | --- | ---: | ---: | ---: | ---: |
-| clean | 0.99 | 0.99 | 0.99 | 2,944 |
-| suspicious | 0.26 | 0.28 | 0.27 | 29 |
-| malicious | 0.92 | 0.91 | 0.92 | 77 |
-| macro average | 0.72 | 0.73 | 0.72 | 3,050 |
+| clean | 0.99 | 0.99 | 0.99 | 2,946 |
+| suspicious | 0.38 | 0.28 | 0.32 | 29 |
+| malicious | 0.93 | 0.89 | 0.91 | 80 |
+| macro average | 0.77 | 0.72 | 0.74 | 3,055 |
 
 Confusion matrix:
 
 | Actual \\ Predicted | clean | suspicious | malicious |
 | --- | ---: | ---: | ---: |
-| clean | 2,915 | 23 | 6 |
+| clean | 2,928 | 13 | 5 |
 | suspicious | 21 | 8 | 0 |
-| malicious | 7 | 0 | 70 |
+| malicious | 9 | 0 | 71 |
 
-The observed clean review rate is 0.985%, and the clean-to-malicious rate is
-0.204%. Suspicious remains data-limited; malicious behavior is the principal
+The observed clean review rate is 0.611%, and the clean-to-malicious rate is
+0.170%. Suspicious remains data-limited; malicious behavior is the principal
 blocking target.
 
 ### Caveats

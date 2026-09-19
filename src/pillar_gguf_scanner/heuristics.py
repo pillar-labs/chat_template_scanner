@@ -7,6 +7,7 @@ import logging
 import re
 from typing import Dict, Iterable, List, Mapping, Optional, Tuple
 
+from .instruction_injection import analyze_instruction_injection
 from .models import PatternRule, ScannerConfig, Severity, TemplateFinding
 from .supply_chain import find_supply_chain_install_actions
 from .workspace_exfiltration import analyze_workspace_exfiltration
@@ -150,6 +151,27 @@ def _workspace_exfiltration_findings(template: str, template_name: str) -> List[
     return findings
 
 
+def _instruction_injection_findings(template: str, template_name: str) -> List[TemplateFinding]:
+    signals = analyze_instruction_injection(template)
+    if not signals.complete_backdoor:
+        return []
+    return [
+        TemplateFinding(
+            rule_id="conditional_instruction_injection",
+            severity=Severity.HIGH,
+            message="Template conditionally injects a hidden system instruction based on message content",
+            template_name=template_name,
+            snippet=_extract_snippet(template, signals.first_index),
+            metadata={
+                "content_aliases": signals.content_aliases,
+                "triggered_blocks": signals.triggered_blocks,
+                "system_injections": signals.system_injections,
+                "concealment_blocks": signals.concealment_blocks,
+            },
+        )
+    ]
+
+
 def run_heuristics(
     *,
     default_template: Optional[str],
@@ -290,6 +312,7 @@ def run_heuristics(
 
         results.extend(_supply_chain_findings(template, template_name))
         results.extend(_workspace_exfiltration_findings(template, template_name))
+        results.extend(_instruction_injection_findings(template, template_name))
 
     if default_template:
         evaluate(default_template, "default")

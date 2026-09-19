@@ -10,6 +10,7 @@ from importlib import resources
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from .instruction_injection import extract_instruction_injection_features
 from .models import TemplateClassifierResult, Verdict
 from .supply_chain import extract_supply_chain_features
 from .workspace_exfiltration import extract_workspace_exfiltration_features
@@ -145,6 +146,7 @@ def extract_features(template: str) -> Dict[str, float]:
 
     features["supply_chain_count"] = _count_pattern(template, SUPPLY_CHAIN_PATTERNS)
     features["has_supply_chain"] = float(features["supply_chain_count"] > 0)
+    features.update(extract_instruction_injection_features(template))
     features.update(extract_supply_chain_features(template))
     features.update(extract_workspace_exfiltration_features(template))
 

@@ -93,5 +93,10 @@
     "template_id": 3313,
     "verdict": "clean",
     "reason": "Base64-like filler appears only inside a non-rendered Jinja comment."
+  },
+  {
+    "template_id": 3316,
+    "verdict": "malicious",
+    "reason": "Content-triggered alias check injects a concealed system instruction from GGUF metadata."
   }
 ]
