@@ -8,7 +8,7 @@ security findings. It classifies embedded GGUF chat templates as `clean`,
 triage and does not replace artifact provenance, sandboxing, runtime controls,
 or human review.
 
-Release: `0.1.0`
+Release: `0.1.1`
 
 Artifact:
 `src/pillar_gguf_scanner/data/template_classifier.json.gz`
@@ -194,7 +194,7 @@ test.
 
 ## Public artifact regression
 
-The `0.1.0` CLI was run against the public Hugging Face repository
+The `0.1.1` CLI was run against the public Hugging Face repository
 `pragnyanramtha/gguf-chat-template-backdoor-poc`, file
 `gguf_chat_template_backdoor_loadable.gguf`, with Pillar cloud scanning
 disabled. The scanner extracted template hash

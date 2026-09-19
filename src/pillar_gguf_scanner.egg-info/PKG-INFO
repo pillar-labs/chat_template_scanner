@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: pillar-gguf-scanner
-Version: 0.1.0
+Version: 0.1.1
 Summary: Fast, programmatic scanning utilities for GGUF chat templates.
 Author: Pillar Security
 License: Apache-2.0
