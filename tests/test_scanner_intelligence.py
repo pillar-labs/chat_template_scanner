@@ -21,7 +21,7 @@ MALICIOUS_PROMPT_INJECTION_TEMPLATE = """
 """
 
 
-def test_scan_path_runs_classifier_for_unknown_template(gguf_template_factory) -> None:
+def test_scan_path_combines_classifier_with_high_confidence_findings(gguf_template_factory) -> None:
     path = gguf_template_factory(default_template=MALICIOUS_PROMPT_INJECTION_TEMPLATE)
 
     scanner = GGUFTemplateScanner()
@@ -29,20 +29,19 @@ def test_scan_path_runs_classifier_for_unknown_template(gguf_template_factory) -
 
     assert result.classifier_results
     assert result.classifier_results[0].template_name == "default"
-    assert result.classifier_results[0].verdict == Verdict.MALICIOUS
+    assert list(result.critical_findings)
     assert result.verdict == Verdict.MALICIOUS
 
 
-def test_default_scanner_uses_packaged_classifier_for_unknown_template(gguf_template_factory) -> None:
+def test_default_scanner_reports_packaged_ordinal_stages(gguf_template_factory) -> None:
     path = gguf_template_factory(default_template=MALICIOUS_PROMPT_INJECTION_TEMPLATE)
 
     result = GGUFTemplateScanner().scan_path(path)
 
     assert result.classifier_results
     assert result.classifier_results[0].template_name == "default"
-    assert result.classifier_results[0].verdict == Verdict.MALICIOUS
-    assert result.classifier_results[0].confidence > 0.5
     assert set(result.classifier_results[0].stage_probabilities) == {"risk", "harm"}
+    assert all(0.0 <= value <= 1.0 for value in result.classifier_results[0].stage_probabilities.values())
     assert result.verdict == Verdict.MALICIOUS
 
 
@@ -68,6 +67,8 @@ def test_cli_json_real_scan_reports_packaged_classifier_result(
     captured = capsys.readouterr()
     payload = json.loads(captured.out)
     assert exit_code == 1
+    assert payload["verdict"] == "malicious"
+    assert any(finding["severity"] in {"high", "critical"} for finding in payload["findings"])
     assert payload["classifier_results"]
     assert payload["classifier_results"][0]["template_name"] == "default"
-    assert payload["classifier_results"][0]["verdict"] == "malicious"
+    assert set(payload["classifier_results"][0]["stage_probabilities"]) == {"risk", "harm"}

@@ -6,6 +6,7 @@ src/pillar_gguf_scanner/classifier.py
 src/pillar_gguf_scanner/cli.py
 src/pillar_gguf_scanner/exceptions.py
 src/pillar_gguf_scanner/heuristics.py
+src/pillar_gguf_scanner/instruction_injection.py
 src/pillar_gguf_scanner/models.py
 src/pillar_gguf_scanner/pillar_client.py
 src/pillar_gguf_scanner/py.typed
@@ -24,6 +25,7 @@ src/pillar_gguf_scanner/data/template_classifier.json.gz
 tests/test_cli.py
 tests/test_extractor.py
 tests/test_heuristics.py
+tests/test_instruction_injection_detection.py
 tests/test_integration_heuristics.py
 tests/test_pillar_client.py
 tests/test_public_api.py
