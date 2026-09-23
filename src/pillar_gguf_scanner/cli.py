@@ -403,9 +403,7 @@ def _run_huggingface_repo_scan(args: argparse.Namespace, *, scanner: GGUFTemplat
         on_progress=_make_repo_progress_callback(repo_label),
     )
     if args.json:
-        return _print_json_results(
-            results, repo_id=args.hf_repo, revision=args.hf_revision, stream=sys.stdout
-        )
+        return _print_json_results(results, repo_id=args.hf_repo, revision=args.hf_revision, stream=sys.stdout)
     return _print_human_summaries(results, repo_label=repo_label, stream=sys.stdout, no_color=args.no_color)
 
 

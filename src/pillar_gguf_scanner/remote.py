@@ -467,9 +467,7 @@ def list_huggingface_gguf_files(
 
     return [
         path
-        for path in list_huggingface_repo_files(
-            repo_id, revision=revision, token=token, client=client, config=config
-        )
+        for path in list_huggingface_repo_files(repo_id, revision=revision, token=token, client=client, config=config)
         if path.lower().endswith(".gguf")
     ]
 

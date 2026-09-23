@@ -145,9 +145,7 @@ async def test_ascan_huggingface_repo_reports_progress(monkeypatch, scan_result_
 
     monkeypatch.setattr(GGUFTemplateScanner, "ascan_huggingface", fake_ascan)
     seen = []
-    results = await scanner.ascan_huggingface_repo(
-        "owner/repo", on_progress=lambda i, n, r: seen.append((i, n))
-    )
+    results = await scanner.ascan_huggingface_repo("owner/repo", on_progress=lambda i, n, r: seen.append((i, n)))
 
     assert len(results) == 1
     assert seen == [(1, 1)]
