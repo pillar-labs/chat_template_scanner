@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -40,11 +41,19 @@ from .reader import ChatTemplateExtraction, parse_chat_templates_from_bytes, rea
 from .remote import (
     afetch_chat_templates_from_huggingface,
     afetch_chat_templates_from_url,
+    alist_huggingface_gguf_files,
     fetch_chat_templates_from_huggingface,
     fetch_chat_templates_from_url,
+    list_huggingface_gguf_files,
 )
 
 PathLike = Union[str, Path]
+
+
+def _noop_progress(index: int, total: int, result: "ScanResult") -> None:
+    """Default no-op progress callback for repository scans."""
+
+    return None
 
 
 logger = logging.getLogger("pillar_gguf_scanner.scanner")
@@ -538,6 +547,84 @@ class GGUFTemplateScanner:
             use_pillar=use_pillar,
         )
 
+    def scan_huggingface_repo(
+        self,
+        repo_id: str,
+        *,
+        revision: str = "main",
+        token: Optional[str] = None,
+        use_pillar: Optional[bool] = None,
+        on_progress: Callable[[int, int, ScanResult], None] = _noop_progress,
+    ) -> List[ScanResult]:
+        """Scan every GGUF file in a Hugging Face repository.
+
+        Lists the repository tree at the given revision, keeps paths ending
+        in ``.gguf``, and scans each file with scan_huggingface().
+
+        Args:
+            repo_id: Repository identifier in "owner/repo" format.
+            revision: Git revision (branch, tag, or commit hash). Defaults to "main".
+            token: Optional Hugging Face API token for accessing private repositories.
+            use_pillar: Whether to use Pillar API. Defaults to True if API key provided.
+            on_progress: Callback invoked after each file is scanned
+                as ``on_progress(index, total, result)`` with 1-based index.
+                Defaults to a silent no-op.
+
+        Returns:
+            List of ScanResult, one per GGUF file, in sorted filename order.
+            If the repository cannot be listed, returns a single-element list
+            with a Verdict.ERROR result. If no GGUF files are found, returns
+            a single-element list with a Verdict.ERROR result (code
+            "no_gguf_files").
+
+        Example:
+            >>> scanner = GGUFTemplateScanner()
+            >>> for result in scanner.scan_huggingface_repo("owner/repo"):
+            ...     print(result.source, result.verdict)
+        """
+
+        try:
+            filenames = list_huggingface_gguf_files(
+                repo_id,
+                revision=revision,
+                token=token,
+                client=self._http_client,
+                config=self._config,
+            )
+        except RemoteFetchError as exc:
+            return [
+                self._error_scan_result(
+                    source=f"huggingface:{repo_id}@{revision}",
+                    code="remote_fetch_error",
+                    message=str(exc),
+                    context={"repo_id": repo_id, "revision": revision},
+                )
+            ]
+
+        if not filenames:
+            return [
+                self._error_scan_result(
+                    source=f"huggingface:{repo_id}@{revision}",
+                    code="no_gguf_files",
+                    message=f"no GGUF files found in repository {repo_id}@{revision}",
+                    context={"repo_id": repo_id, "revision": revision},
+                )
+            ]
+
+        results: List[ScanResult] = []
+        total = len(filenames)
+        for index, filename in enumerate(filenames, start=1):
+            result = self.scan_huggingface(
+                repo_id,
+                filename,
+                revision=revision,
+                token=token,
+                use_pillar=use_pillar,
+            )
+            results.append(result)
+            on_progress(index, total, result)
+        return results
+
     async def ascan_url(
         self,
         url: str,
@@ -657,6 +744,59 @@ class GGUFTemplateScanner:
             extraction=extraction,
             use_pillar=use_pillar,
         )
+
+    async def ascan_huggingface_repo(
+        self,
+        repo_id: str,
+        *,
+        revision: str = "main",
+        token: Optional[str] = None,
+        use_pillar: Optional[bool] = None,
+        on_progress: Callable[[int, int, ScanResult], None] = _noop_progress,
+    ) -> List[ScanResult]:
+        """Asynchronous variant of scan_huggingface_repo."""
+
+        try:
+            filenames = await alist_huggingface_gguf_files(
+                repo_id,
+                revision=revision,
+                token=token,
+                client=self._async_client,
+                config=self._config,
+            )
+        except RemoteFetchError as exc:
+            return [
+                self._error_scan_result(
+                    source=f"huggingface:{repo_id}@{revision}",
+                    code="remote_fetch_error",
+                    message=str(exc),
+                    context={"repo_id": repo_id, "revision": revision},
+                )
+            ]
+
+        if not filenames:
+            return [
+                self._error_scan_result(
+                    source=f"huggingface:{repo_id}@{revision}",
+                    code="no_gguf_files",
+                    message=f"no GGUF files found in repository {repo_id}@{revision}",
+                    context={"repo_id": repo_id, "revision": revision},
+                )
+            ]
+
+        results: List[ScanResult] = []
+        total = len(filenames)
+        for index, filename in enumerate(filenames, start=1):
+            result = await self.ascan_huggingface(
+                repo_id,
+                filename,
+                revision=revision,
+                token=token,
+                use_pillar=use_pillar,
+            )
+            results.append(result)
+            on_progress(index, total, result)
+        return results
 
     async def ascan_path(
         self,

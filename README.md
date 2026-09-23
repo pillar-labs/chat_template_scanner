@@ -10,9 +10,10 @@ This project addresses security threats identified in research by [Pillar Securi
 
 - Parse GGUF headers and extract default or named chat templates with a small, dependency-light API.
 - Run a shipped lightweight anomaly classifier for unknown templates using the existing trained model artifact.
-- Run configurable heuristics (URLs, base64 payloads, normalize.js patterns, etc.) to flag suspicious templates.
+- Run configurable heuristics (URLs, base64 payloads, normalize.js patterns, conditional instruction injection, supply-chain install actions, workspace exfiltration, etc.) to flag suspicious templates.
 - Invoke Pillar’s hosted scanning service when an API key is provided, returning unified findings.
 - Stream GGUF headers from plain URLs or Hugging Face repositories using ranged requests.
+- Scan every GGUF file in a Hugging Face repo with a single call.
 - Async and sync functions for local, remote, and Hugging Face scans.
 
 ## Offline Template Classifier
@@ -168,7 +169,7 @@ scanner = GGUFTemplateScanner(pillar_api_key="your-api-key")
 result = scanner.scan("models/my-model.gguf", use_pillar=True)
 ```
 
-Set `use_pillar=False` to opt out of remote calls on a per-scan basis. Remote requests use `httpx` clients supplied by the caller or managed internally. Attach `ScannerConfig(event_handler=...)` to receive structured telemetry such as `pillar_response`, `remote_fetch_failed`, and `heuristic_match` events.
+Set `use_pillar=False` to opt out of remote calls on a per-scan basis. Remote requests use `httpx` clients supplied by the caller or managed internally.
 
 ## Scanning Different Sources
 
@@ -207,6 +208,26 @@ ref = HuggingFaceRepoRef(
 )
 result = scanner.scan(ref)
 ```
+
+### Scanning every GGUF in a Hugging Face repo
+
+`scan_huggingface_repo()` lists the repo tree at the given revision, keeps
+paths ending in `.gguf`, and scans each file (header-only range requests, so
+multi-file repos stay cheap):
+
+```python
+from pillar_gguf_scanner import GGUFTemplateScanner
+
+scanner = GGUFTemplateScanner()
+for result in scanner.scan_huggingface_repo("ariel-pillar/Qwen2.5-VL-7B-Instruct-GGUF"):
+    print(result.source, result.verdict.value)
+```
+
+An async variant (`ascan_huggingface_repo()`) and file-listing helpers
+(`list_huggingface_repo_files()`, `list_huggingface_gguf_files()`) are also
+available. If the repo cannot be listed, or contains no GGUF files, a
+single `Verdict.ERROR` result is returned (codes `remote_fetch_error` and
+`no_gguf_files`).
 
 ### Scanning from URLs
 
@@ -267,7 +288,7 @@ async def batch_scan(repo_files):
         return await asyncio.gather(*tasks)
 ```
 
-The low-level helpers `fetch_chat_templates_from_url`, `afetch_chat_templates_from_url`, and `fetch_chat_templates_from_huggingface` are also available for integrating into existing pipelines.
+The low-level helpers `fetch_chat_templates_from_url`, `afetch_chat_templates_from_url`, `fetch_chat_templates_from_huggingface`, `afetch_chat_templates_from_huggingface`, `list_huggingface_repo_files`, and `list_huggingface_gguf_files` (plus `async` `alist_*` variants) are also available for integrating into existing pipelines.
 
 ## Common Patterns
 
@@ -292,6 +313,9 @@ result = scanner.scan_huggingface("owner/repo", "model.gguf")
 # Hugging Face - Method 2: Via unified scan() with HuggingFaceRepoRef
 ref = HuggingFaceRepoRef(repo_id="owner/repo", filename="model.gguf")
 result = scanner.scan(ref)
+
+# Hugging Face - whole repo: scan every GGUF file it contains
+results = scanner.scan_huggingface_repo("owner/repo")
 ```
 
 ### Checking Scan Results
@@ -388,17 +412,41 @@ uv run pillar-gguf-scanner path/to/model.gguf
 
 # JSON output and remote scanning
 pillar-gguf-scanner path/to/model.gguf --json --pillar-api-key "$PILLAR_API_KEY"
+
+# scan a single file on Hugging Face
+pillar-gguf-scanner --hf-repo owner/repo --hf-filename model.gguf
+
+# scan every GGUF file in a Hugging Face repo
+uv run pillar-gguf-scanner --hf-repo ariel-pillar/Qwen2.5-VL-7B-Instruct-GGUF
 ```
+
+`--hf-revision` requires `--hf-repo`. Leading `hf://` and trailing slashes on
+`--hf-repo` are tolerated (`hf://owner/repo/` works). A positional `hf://…`
+argument is rejected with a hint to use `--hf-repo` instead.
+
+Repo scans print one verdict line per file plus a `Summary: X clean,
+Y suspicious, Z malicious, W error` footer. While a repo scan runs, progress
+goes to stderr — first `Scanning N GGUF file(s) in owner/repo@main…`, then one
+`[i/N] verdict source` line per completed file — so `--json` output on stdout
+stays parseable. With `--json`, a repo scan emits
+`{"repo_id": ..., "revision": ..., "summary": {...}, "results": [...]}` where
+each entry has the same shape as a single-file scan. The exit code is 1 if
+any file is malicious or errored, 0 otherwise (single-file scans: 1 on
+malicious/error, 0 on clean/suspicious).
 
 Run `pillar-gguf-scanner --help` to see all options, including severity overrides and Pillar toggles.
 
-The core package scans local files, direct URLs, and specific Hugging Face GGUF files. Larger-scale Hugging Face crawling,
+The core package scans local files, direct URLs, single Hugging Face GGUF
+files, and whole Hugging Face repos. Larger-scale Hugging Face crawling,
 live monitoring, and registry-wide batch orchestration are intended to sit on top of the library rather than inside the core scanner.
 
 ```text
-usage: pillar-gguf-scanner [-h] [--pillar-api-key PILLAR_API_KEY] [--no-pillar]
-                           [--json] [--url-severity {info,low,medium,high,critical}]
+usage: pillar-gguf-scanner [-h] [--pillar-api-key PILLAR_API_KEY]
+                           [--no-pillar] [--json] [--no-color]
+                           [--url-severity {info,low,medium,high,critical}]
                            [--base64-severity {info,low,medium,high,critical}]
+                           [--initial-request-size INITIAL_REQUEST_SIZE]
+                           [--max-request-size MAX_REQUEST_SIZE]
                            [--hf-repo HF_REPO] [--hf-filename HF_FILENAME]
                            [--hf-revision HF_REVISION] [--hf-token HF_TOKEN]
                            [source]
@@ -477,7 +525,7 @@ Tests live in `tests/` and cover parsing, heuristics, and remote fetch logic. Th
 - Check if the model actually has chat templates:
   ```python
   result = scanner.scan("model.gguf")
-  if not result.evidence.has_template:
+  if result.evidence.default_template is None and not result.evidence.named_templates:
       print("No chat template found in this model")
   ```
 - Some GGUF files don't include chat templates in metadata

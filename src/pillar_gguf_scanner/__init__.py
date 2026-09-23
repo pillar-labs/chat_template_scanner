@@ -36,9 +36,14 @@ from .reader import (  # noqa: F401
 from .remote import (  # noqa: F401
     afetch_chat_templates_from_huggingface,
     afetch_chat_templates_from_url,
+    alist_huggingface_gguf_files,
+    alist_huggingface_repo_files,
+    build_huggingface_tree_url,
     build_huggingface_url,
     fetch_chat_templates_from_huggingface,
     fetch_chat_templates_from_url,
+    list_huggingface_gguf_files,
+    list_huggingface_repo_files,
 )
 from .scanner import GGUFTemplateScanner, ascanner_session, scanner_session  # noqa: F401
 
@@ -65,7 +70,12 @@ __all__ = [
     "fetch_chat_templates_from_huggingface",
     "afetch_chat_templates_from_url",
     "afetch_chat_templates_from_huggingface",
+    "list_huggingface_repo_files",
+    "list_huggingface_gguf_files",
+    "alist_huggingface_repo_files",
+    "alist_huggingface_gguf_files",
     "build_huggingface_url",
+    "build_huggingface_tree_url",
     "BufferUnderrunError",
     "ChatTemplateExtractionError",
     "GGUFParseError",
@@ -84,4 +94,4 @@ __all__ = [
     "run_heuristics",
 ]
 
-__version__ = "0.1.1"
+__version__ = "0.1.2"
