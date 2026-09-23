@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -547,6 +548,7 @@ class GGUFTemplateScanner:
         revision: str = "main",
         token: Optional[str] = None,
         use_pillar: Optional[bool] = None,
+        on_progress: Optional[Callable[[int, int, ScanResult], None]] = None,
     ) -> List[ScanResult]:
         """Scan every GGUF file in a Hugging Face repository.
 
@@ -558,6 +560,8 @@ class GGUFTemplateScanner:
             revision: Git revision (branch, tag, or commit hash). Defaults to "main".
             token: Optional Hugging Face API token for accessing private repositories.
             use_pillar: Whether to use Pillar API. Defaults to True if API key provided.
+            on_progress: Optional callback invoked after each file is scanned
+                as ``on_progress(index, total, result)`` with 1-based index.
 
         Returns:
             List of ScanResult, one per GGUF file, in sorted filename order.
@@ -600,16 +604,20 @@ class GGUFTemplateScanner:
                 )
             ]
 
-        return [
-            self.scan_huggingface(
+        results: List[ScanResult] = []
+        total = len(filenames)
+        for index, filename in enumerate(filenames, start=1):
+            result = self.scan_huggingface(
                 repo_id,
                 filename,
                 revision=revision,
                 token=token,
                 use_pillar=use_pillar,
             )
-            for filename in filenames
-        ]
+            results.append(result)
+            if on_progress is not None:
+                on_progress(index, total, result)
+        return results
 
     async def ascan_url(
         self,
@@ -738,6 +746,7 @@ class GGUFTemplateScanner:
         revision: str = "main",
         token: Optional[str] = None,
         use_pillar: Optional[bool] = None,
+        on_progress: Optional[Callable[[int, int, ScanResult], None]] = None,
     ) -> List[ScanResult]:
         """Asynchronous variant of scan_huggingface_repo."""
 
@@ -769,16 +778,20 @@ class GGUFTemplateScanner:
                 )
             ]
 
-        return [
-            await self.ascan_huggingface(
+        results: List[ScanResult] = []
+        total = len(filenames)
+        for index, filename in enumerate(filenames, start=1):
+            result = await self.ascan_huggingface(
                 repo_id,
                 filename,
                 revision=revision,
                 token=token,
                 use_pillar=use_pillar,
             )
-            for filename in filenames
-        ]
+            results.append(result)
+            if on_progress is not None:
+                on_progress(index, total, result)
+        return results
 
     async def ascan_path(
         self,

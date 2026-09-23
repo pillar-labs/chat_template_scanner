@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Dict, List, TextIO
 from urllib.parse import urlparse
@@ -330,6 +331,25 @@ def _print_json_results(
     return 0 if all(r.verdict in (Verdict.CLEAN, Verdict.SUSPICIOUS) for r in results) else 1
 
 
+def _make_repo_progress_callback(repo_label: str) -> Callable[[int, int, ScanResult], None]:
+    """Build an on_progress callback announcing repo scan progress on stderr.
+
+    Writes to stderr so `--json` output on stdout stays parseable. Announces
+    the total file count on the first file, then one `[i/N] verdict source`
+    line per completed file.
+    """
+
+    console = Console(file=sys.stderr)
+
+    def on_progress(index: int, total: int, result: ScanResult) -> None:
+        if index == 1:
+            console.print(f"Scanning {total} GGUF file(s) in {repo_label}…")
+        verdict_color = _get_verdict_color(result.verdict)
+        console.print(f"[{index}/{total}] [{verdict_color}]{result.verdict.value}[/{verdict_color}] {result.source}")
+
+    return on_progress
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
@@ -366,6 +386,7 @@ def main(argv: list[str] | None = None) -> int:
             revision=args.hf_revision,
             token=args.hf_token,
             use_pillar=use_pillar,
+            on_progress=_make_repo_progress_callback(f"{args.hf_repo}@{args.hf_revision}"),
         )
         repo_label = f"{args.hf_repo}@{args.hf_revision}"
         if args.json:

@@ -421,7 +421,10 @@ uv run pillar-gguf-scanner --hf-repo ariel-pillar/Qwen2.5-VL-7B-Instruct-GGUF
 ```
 
 Repo scans print one verdict line per file plus a `Summary: X clean,
-Y suspicious, Z malicious, W error` footer. With `--json`, a repo scan emits
+Y suspicious, Z malicious, W error` footer. While a repo scan runs, progress
+goes to stderr — first `Scanning N GGUF file(s) in owner/repo@main…`, then one
+`[i/N] verdict source` line per completed file — so `--json` output on stdout
+stays parseable. With `--json`, a repo scan emits
 `{"repo_id": ..., "revision": ..., "summary": {...}, "results": [...]}` where
 each entry has the same shape as a single-file scan. The exit code is 1 if
 any file is malicious or errored, 0 otherwise (single-file scans: 1 on

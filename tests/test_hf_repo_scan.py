@@ -111,6 +111,48 @@ def test_scan_huggingface_repo_scans_each_gguf(monkeypatch, scan_result_factory)
     assert calls[0] == ("owner/repo", "b.gguf", "main")
 
 
+def test_scan_huggingface_repo_reports_progress(monkeypatch, scan_result_factory) -> None:
+    scanner = GGUFTemplateScanner()
+    monkeypatch.setattr(
+        "pillar_gguf_scanner.scanner.list_huggingface_gguf_files",
+        lambda *args, **kwargs: ["a.gguf", "b.gguf"],
+    )
+    monkeypatch.setattr(
+        GGUFTemplateScanner,
+        "scan_huggingface",
+        lambda self, repo_id, filename, **kwargs: scan_result_factory(
+            verdict=Verdict.CLEAN, source=f"huggingface:{repo_id}/{filename}@main"
+        ),
+    )
+    seen = []
+    results = scanner.scan_huggingface_repo("owner/repo", on_progress=lambda i, n, r: seen.append((i, n, r.source)))
+
+    assert len(results) == 2
+    assert [(i, n) for i, n, _ in seen] == [(1, 2), (2, 2)]
+    assert all(source.startswith("huggingface:owner/repo/") for _, _, source in seen)
+
+
+@pytest.mark.asyncio
+async def test_ascan_huggingface_repo_reports_progress(monkeypatch, scan_result_factory) -> None:
+    scanner = GGUFTemplateScanner()
+    monkeypatch.setattr(
+        "pillar_gguf_scanner.scanner.alist_huggingface_gguf_files",
+        mock.AsyncMock(return_value=["a.gguf"]),
+    )
+
+    async def fake_ascan(self, repo_id, filename, **kwargs):
+        return scan_result_factory(verdict=Verdict.CLEAN, source=f"huggingface:{repo_id}/{filename}@main")
+
+    monkeypatch.setattr(GGUFTemplateScanner, "ascan_huggingface", fake_ascan)
+    seen = []
+    results = await scanner.ascan_huggingface_repo(
+        "owner/repo", on_progress=lambda i, n, r: seen.append((i, n))
+    )
+
+    assert len(results) == 1
+    assert seen == [(1, 1)]
+
+
 def test_scan_huggingface_repo_reports_no_gguf_files(monkeypatch) -> None:
     scanner = GGUFTemplateScanner()
     monkeypatch.setattr(
@@ -163,7 +205,7 @@ def test_cli_hf_repo_scans_whole_repo(monkeypatch, capsys, scan_result_factory) 
 
     assert exit_code == 1
     stub.mock.scan_huggingface_repo.assert_called_once_with(
-        "owner/repo", revision="main", token=None, use_pillar=None
+        "owner/repo", revision="main", token=None, use_pillar=None, on_progress=mock.ANY
     )
     captured = capsys.readouterr()
     assert "Repo:" in captured.out
@@ -184,6 +226,29 @@ def test_cli_hf_repo_json_shape(monkeypatch, capsys, scan_result_factory) -> Non
     assert payload["summary"] == {"clean": 1, "suspicious": 0, "malicious": 0, "error": 0}
     assert len(payload["results"]) == 1
     assert payload["results"][0]["verdict"] == "clean"
+
+
+def test_cli_hf_repo_reports_progress_on_stderr(monkeypatch, capsys, scan_result_factory) -> None:
+    results = [
+        scan_result_factory(verdict=Verdict.CLEAN, source="huggingface:owner/repo/a.gguf@main"),
+        scan_result_factory(verdict=Verdict.CLEAN, source="huggingface:owner/repo/b.gguf@main"),
+    ]
+    stub = _patch_scanner(monkeypatch, scan_result_factory, results)
+
+    def fake_repo(repo_id, *, revision="main", token=None, use_pillar=None, on_progress=None):
+        for index, result in enumerate(results, start=1):
+            on_progress(index, len(results), result)
+        return results
+
+    stub.mock.scan_huggingface_repo.side_effect = fake_repo
+
+    exit_code = cli.main(["--hf-repo", "owner/repo"])
+
+    assert exit_code == 0
+    err = capsys.readouterr().err
+    assert "Scanning 2 GGUF file(s) in owner/repo@main" in err
+    assert "[1/2]" in err
+    assert "[2/2]" in err
 
 
 def test_cli_hf_single_file_still_works(monkeypatch, capsys, scan_result_factory) -> None:
