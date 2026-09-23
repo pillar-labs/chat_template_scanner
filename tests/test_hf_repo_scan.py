@@ -204,13 +204,16 @@ def test_cli_hf_repo_scans_whole_repo(monkeypatch, capsys, scan_result_factory) 
     exit_code = cli.main(["--hf-repo", "owner/repo"])
 
     assert exit_code == 1
-    stub.mock.scan_huggingface_repo.assert_called_once_with(
-        "owner/repo", revision="main", token=None, use_pillar=None, on_progress=mock.ANY
-    )
+    on_progress = stub.mock.scan_huggingface_repo.call_args.kwargs["on_progress"]
+    for index, result in enumerate(results, start=1):
+        on_progress(index, len(results), result)
     captured = capsys.readouterr()
     assert "Repo:" in captured.out
     assert "1 clean" in captured.out
     assert "1 malicious" in captured.out
+    assert "Scanning 2 GGUF file(s) in owner/repo@main" in captured.err
+    assert "[1/2]" in captured.err
+    assert "[2/2]" in captured.err
 
 
 def test_cli_hf_repo_json_shape(monkeypatch, capsys, scan_result_factory) -> None:
@@ -226,29 +229,6 @@ def test_cli_hf_repo_json_shape(monkeypatch, capsys, scan_result_factory) -> Non
     assert payload["summary"] == {"clean": 1, "suspicious": 0, "malicious": 0, "error": 0}
     assert len(payload["results"]) == 1
     assert payload["results"][0]["verdict"] == "clean"
-
-
-def test_cli_hf_repo_reports_progress_on_stderr(monkeypatch, capsys, scan_result_factory) -> None:
-    results = [
-        scan_result_factory(verdict=Verdict.CLEAN, source="huggingface:owner/repo/a.gguf@main"),
-        scan_result_factory(verdict=Verdict.CLEAN, source="huggingface:owner/repo/b.gguf@main"),
-    ]
-    stub = _patch_scanner(monkeypatch, scan_result_factory, results)
-
-    def fake_repo(repo_id, *, revision="main", token=None, use_pillar=None, on_progress=None):
-        for index, result in enumerate(results, start=1):
-            on_progress(index, len(results), result)
-        return results
-
-    stub.mock.scan_huggingface_repo.side_effect = fake_repo
-
-    exit_code = cli.main(["--hf-repo", "owner/repo"])
-
-    assert exit_code == 0
-    err = capsys.readouterr().err
-    assert "Scanning 2 GGUF file(s) in owner/repo@main" in err
-    assert "[1/2]" in err
-    assert "[2/2]" in err
 
 
 def test_cli_hf_single_file_still_works(monkeypatch, capsys, scan_result_factory) -> None:

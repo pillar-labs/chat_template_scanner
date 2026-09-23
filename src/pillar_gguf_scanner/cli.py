@@ -14,7 +14,7 @@ from urllib.parse import urlparse
 from rich.console import Console
 from rich.text import Text
 
-from .models import HuggingFaceRepoRef, ScannerConfig, ScanResult, Severity, Verdict
+from .models import ScannerConfig, ScanResult, Severity, Verdict
 from .scanner import GGUFTemplateScanner
 
 
@@ -353,67 +353,73 @@ def _make_repo_progress_callback(repo_label: str) -> Callable[[int, int, ScanRes
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
-
-    source: HuggingFaceRepoRef | Path | str
+    config = _build_config(args)
+    scanner = GGUFTemplateScanner(pillar_api_key=args.pillar_api_key, config=config)
 
     if args.hf_repo or args.hf_filename or args.hf_token:
-        if not args.hf_repo:
-            parser.error("--hf-repo is required when --hf-filename or --hf-token is provided")
-        if args.source:
-            parser.error("positional source cannot be combined with --hf-repo")
+        return _run_huggingface_scan(parser, args, scanner=scanner)
+    return _run_path_or_url_scan(parser, args, scanner=scanner)
 
-        config = _build_config(args)
-        scanner = GGUFTemplateScanner(
-            pillar_api_key=args.pillar_api_key,
-            config=config,
+
+def _use_pillar(args: argparse.Namespace) -> bool | None:
+    return None if not args.no_pillar else False
+
+
+def _run_huggingface_scan(
+    parser: argparse.ArgumentParser,
+    args: argparse.Namespace,
+    *,
+    scanner: GGUFTemplateScanner,
+) -> int:
+    if not args.hf_repo:
+        parser.error("--hf-repo is required when --hf-filename or --hf-token is provided")
+    if args.source:
+        parser.error("positional source cannot be combined with --hf-repo")
+    if args.hf_filename:
+        return _run_huggingface_file_scan(args, scanner=scanner)
+    return _run_huggingface_repo_scan(args, scanner=scanner)
+
+
+def _run_huggingface_file_scan(args: argparse.Namespace, *, scanner: GGUFTemplateScanner) -> int:
+    result = scanner.scan_huggingface(
+        args.hf_repo,
+        args.hf_filename,
+        revision=args.hf_revision,
+        token=args.hf_token,
+        use_pillar=_use_pillar(args),
+    )
+    if args.json:
+        return _print_json(result, stream=sys.stdout)
+    return _print_human_summary(result, stream=sys.stdout, no_color=args.no_color)
+
+
+def _run_huggingface_repo_scan(args: argparse.Namespace, *, scanner: GGUFTemplateScanner) -> int:
+    repo_label = f"{args.hf_repo}@{args.hf_revision}"
+    results = scanner.scan_huggingface_repo(
+        args.hf_repo,
+        revision=args.hf_revision,
+        token=args.hf_token,
+        use_pillar=_use_pillar(args),
+        on_progress=_make_repo_progress_callback(repo_label),
+    )
+    if args.json:
+        return _print_json_results(
+            results, repo_id=args.hf_repo, revision=args.hf_revision, stream=sys.stdout
         )
-        use_pillar = None if not args.no_pillar else False
+    return _print_human_summaries(results, repo_label=repo_label, stream=sys.stdout, no_color=args.no_color)
 
-        if args.hf_filename:
-            result = scanner.scan_huggingface(
-                args.hf_repo,
-                args.hf_filename,
-                revision=args.hf_revision,
-                token=args.hf_token,
-                use_pillar=use_pillar,
-            )
-            if args.json:
-                return _print_json(result, stream=sys.stdout)
-            return _print_human_summary(result, stream=sys.stdout, no_color=args.no_color)
 
-        results = scanner.scan_huggingface_repo(
-            args.hf_repo,
-            revision=args.hf_revision,
-            token=args.hf_token,
-            use_pillar=use_pillar,
-            on_progress=_make_repo_progress_callback(f"{args.hf_repo}@{args.hf_revision}"),
-        )
-        repo_label = f"{args.hf_repo}@{args.hf_revision}"
-        if args.json:
-            return _print_json_results(
-                results, repo_id=args.hf_repo, revision=args.hf_revision, stream=sys.stdout
-            )
-        return _print_human_summaries(results, repo_label=repo_label, stream=sys.stdout, no_color=args.no_color)
-
+def _run_path_or_url_scan(
+    parser: argparse.ArgumentParser,
+    args: argparse.Namespace,
+    *,
+    scanner: GGUFTemplateScanner,
+) -> int:
     if not args.source:
         parser.error("path or URL required when Hugging Face options are not provided")
     parsed = urlparse(args.source)
-    if parsed.scheme in {"http", "https"}:
-        source = args.source
-    else:
-        source = Path(args.source)
-
-    config = _build_config(args)
-    scanner = GGUFTemplateScanner(
-        pillar_api_key=args.pillar_api_key,
-        config=config,
-    )
-
-    result = scanner.scan(
-        source,
-        use_pillar=None if not args.no_pillar else False,
-    )
-
+    source: Path | str = args.source if parsed.scheme in {"http", "https"} else Path(args.source)
+    result = scanner.scan(source, use_pillar=_use_pillar(args))
     if args.json:
         return _print_json(result, stream=sys.stdout)
     return _print_human_summary(result, stream=sys.stdout, no_color=args.no_color)

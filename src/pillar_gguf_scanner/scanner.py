@@ -50,6 +50,12 @@ from .remote import (
 PathLike = Union[str, Path]
 
 
+def _noop_progress(index: int, total: int, result: "ScanResult") -> None:
+    """Default no-op progress callback for repository scans."""
+
+    return None
+
+
 logger = logging.getLogger("pillar_gguf_scanner.scanner")
 
 
@@ -548,7 +554,7 @@ class GGUFTemplateScanner:
         revision: str = "main",
         token: Optional[str] = None,
         use_pillar: Optional[bool] = None,
-        on_progress: Optional[Callable[[int, int, ScanResult], None]] = None,
+        on_progress: Callable[[int, int, ScanResult], None] = _noop_progress,
     ) -> List[ScanResult]:
         """Scan every GGUF file in a Hugging Face repository.
 
@@ -560,8 +566,9 @@ class GGUFTemplateScanner:
             revision: Git revision (branch, tag, or commit hash). Defaults to "main".
             token: Optional Hugging Face API token for accessing private repositories.
             use_pillar: Whether to use Pillar API. Defaults to True if API key provided.
-            on_progress: Optional callback invoked after each file is scanned
+            on_progress: Callback invoked after each file is scanned
                 as ``on_progress(index, total, result)`` with 1-based index.
+                Defaults to a silent no-op.
 
         Returns:
             List of ScanResult, one per GGUF file, in sorted filename order.
@@ -615,8 +622,7 @@ class GGUFTemplateScanner:
                 use_pillar=use_pillar,
             )
             results.append(result)
-            if on_progress is not None:
-                on_progress(index, total, result)
+            on_progress(index, total, result)
         return results
 
     async def ascan_url(
@@ -746,7 +752,7 @@ class GGUFTemplateScanner:
         revision: str = "main",
         token: Optional[str] = None,
         use_pillar: Optional[bool] = None,
-        on_progress: Optional[Callable[[int, int, ScanResult], None]] = None,
+        on_progress: Callable[[int, int, ScanResult], None] = _noop_progress,
     ) -> List[ScanResult]:
         """Asynchronous variant of scan_huggingface_repo."""
 
@@ -789,8 +795,7 @@ class GGUFTemplateScanner:
                 use_pillar=use_pillar,
             )
             results.append(result)
-            if on_progress is not None:
-                on_progress(index, total, result)
+            on_progress(index, total, result)
         return results
 
     async def ascan_path(
