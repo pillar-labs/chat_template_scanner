@@ -80,8 +80,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--hf-revision",
-        help="Revision to fetch from Hugging Face (default: main)",
-        default="main",
+        help="Revision to fetch from Hugging Face (default: main). Requires --hf-repo.",
+        default=None,
     )
     parser.add_argument(
         "--hf-token",
@@ -356,13 +356,22 @@ def main(argv: list[str] | None = None) -> int:
     config = _build_config(args)
     scanner = GGUFTemplateScanner(pillar_api_key=args.pillar_api_key, config=config)
 
-    if args.hf_repo or args.hf_filename or args.hf_token:
+    if args.hf_repo or args.hf_filename or args.hf_revision or args.hf_token:
         return _run_huggingface_scan(parser, args, scanner=scanner)
     return _run_path_or_url_scan(parser, args, scanner=scanner)
 
 
 def _use_pillar(args: argparse.Namespace) -> bool | None:
     return None if not args.no_pillar else False
+
+
+def _normalize_repo_id(repo_id: str) -> str:
+    """Tolerate hf:// prefixes and trailing slashes in --hf-repo values."""
+
+    normalized = repo_id.strip()
+    if normalized.startswith("hf://"):
+        normalized = normalized[len("hf://") :]
+    return normalized.rstrip("/")
 
 
 def _run_huggingface_scan(
@@ -372,19 +381,29 @@ def _run_huggingface_scan(
     scanner: GGUFTemplateScanner,
 ) -> int:
     if not args.hf_repo:
-        parser.error("--hf-repo is required when --hf-filename or --hf-token is provided")
+        parser.error("--hf-repo is required when --hf-filename, --hf-revision, or --hf-token is provided")
     if args.source:
         parser.error("positional source cannot be combined with --hf-repo")
+    repo_id = _normalize_repo_id(args.hf_repo)
+    if not repo_id or "/" not in repo_id:
+        parser.error("--hf-repo must be in the form owner/repo")
+    revision = args.hf_revision or "main"
     if args.hf_filename:
-        return _run_huggingface_file_scan(args, scanner=scanner)
-    return _run_huggingface_repo_scan(args, scanner=scanner)
+        return _run_huggingface_file_scan(args, scanner=scanner, repo_id=repo_id, revision=revision)
+    return _run_huggingface_repo_scan(args, scanner=scanner, repo_id=repo_id, revision=revision)
 
 
-def _run_huggingface_file_scan(args: argparse.Namespace, *, scanner: GGUFTemplateScanner) -> int:
+def _run_huggingface_file_scan(
+    args: argparse.Namespace,
+    *,
+    scanner: GGUFTemplateScanner,
+    repo_id: str,
+    revision: str,
+) -> int:
     result = scanner.scan_huggingface(
-        args.hf_repo,
+        repo_id,
         args.hf_filename,
-        revision=args.hf_revision,
+        revision=revision,
         token=args.hf_token,
         use_pillar=_use_pillar(args),
     )
@@ -393,17 +412,23 @@ def _run_huggingface_file_scan(args: argparse.Namespace, *, scanner: GGUFTemplat
     return _print_human_summary(result, stream=sys.stdout, no_color=args.no_color)
 
 
-def _run_huggingface_repo_scan(args: argparse.Namespace, *, scanner: GGUFTemplateScanner) -> int:
-    repo_label = f"{args.hf_repo}@{args.hf_revision}"
+def _run_huggingface_repo_scan(
+    args: argparse.Namespace,
+    *,
+    scanner: GGUFTemplateScanner,
+    repo_id: str,
+    revision: str,
+) -> int:
+    repo_label = f"{repo_id}@{revision}"
     results = scanner.scan_huggingface_repo(
-        args.hf_repo,
-        revision=args.hf_revision,
+        repo_id,
+        revision=revision,
         token=args.hf_token,
         use_pillar=_use_pillar(args),
         on_progress=_make_repo_progress_callback(repo_label),
     )
     if args.json:
-        return _print_json_results(results, repo_id=args.hf_repo, revision=args.hf_revision, stream=sys.stdout)
+        return _print_json_results(results, repo_id=repo_id, revision=revision, stream=sys.stdout)
     return _print_human_summaries(results, repo_label=repo_label, stream=sys.stdout, no_color=args.no_color)
 
 
@@ -416,6 +441,8 @@ def _run_path_or_url_scan(
     if not args.source:
         parser.error("path or URL required when Hugging Face options are not provided")
     parsed = urlparse(args.source)
+    if parsed.scheme == "hf" or args.source.startswith("hf://"):
+        parser.error("hf:// URLs are not supported; use --hf-repo owner/repo [--hf-filename file.gguf] instead")
     source: Path | str = args.source if parsed.scheme in {"http", "https"} else Path(args.source)
     result = scanner.scan(source, use_pillar=_use_pillar(args))
     if args.json:

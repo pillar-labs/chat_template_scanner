@@ -251,3 +251,32 @@ def test_cli_hf_repo_rejects_positional_source() -> None:
     with pytest.raises(SystemExit) as exc_info:
         cli.main(["local.gguf", "--hf-repo", "owner/repo"])
     assert exc_info.value.code == 2
+
+
+def test_cli_hf_revision_requires_repo() -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(["--hf-revision", "v1"])
+    assert exc_info.value.code == 2
+
+
+def test_cli_hf_repo_rejects_bare_owner() -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(["--hf-repo", "owner"])
+    assert exc_info.value.code == 2
+
+
+def test_cli_hf_repo_normalizes_prefix_and_slash(monkeypatch, capsys, scan_result_factory) -> None:
+    results = [scan_result_factory(verdict=Verdict.CLEAN, source="huggingface:owner/repo/a.gguf@main")]
+    stub = _patch_scanner(monkeypatch, scan_result_factory, results)
+
+    exit_code = cli.main(["--hf-repo", "hf://owner/repo/"])
+
+    assert exit_code == 0
+    assert stub.mock.scan_huggingface_repo.call_args.args == ("owner/repo",)
+
+
+def test_cli_hf_positional_redirects_to_hf_repo_flag(capsys) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(["hf://owner/repo"])
+    assert exc_info.value.code == 2
+    assert "--hf-repo owner/repo" in capsys.readouterr().err

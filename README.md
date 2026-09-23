@@ -420,6 +420,10 @@ pillar-gguf-scanner --hf-repo owner/repo --hf-filename model.gguf
 uv run pillar-gguf-scanner --hf-repo ariel-pillar/Qwen2.5-VL-7B-Instruct-GGUF
 ```
 
+`--hf-revision` requires `--hf-repo`. Leading `hf://` and trailing slashes on
+`--hf-repo` are tolerated (`hf://owner/repo/` works). A positional `hf://…`
+argument is rejected with a hint to use `--hf-repo` instead.
+
 Repo scans print one verdict line per file plus a `Summary: X clean,
 Y suspicious, Z malicious, W error` footer. While a repo scan runs, progress
 goes to stderr — first `Scanning N GGUF file(s) in owner/repo@main…`, then one
