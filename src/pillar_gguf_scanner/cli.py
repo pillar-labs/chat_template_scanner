@@ -7,7 +7,7 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Any, Dict, TextIO
+from typing import Any, Dict, List, TextIO
 from urllib.parse import urlparse
 
 from rich.console import Console
@@ -25,7 +25,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "source",
         nargs="?",
-        help="Path or URL to a GGUF file. Omit when using --hf-repo/--hf-filename.",
+        help="Path or URL to a GGUF file. Omit when using --hf-repo.",
     )
     parser.add_argument(
         "--pillar-api-key",
@@ -69,11 +69,13 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--hf-repo",
-        help="Hugging Face repository in the form owner/repo",
+        help="Hugging Face repository in the form owner/repo. "
+        "Without --hf-filename, every GGUF file in the repo is scanned.",
     )
     parser.add_argument(
         "--hf-filename",
-        help="Filename within the Hugging Face repository",
+        help="Single filename within the Hugging Face repository. Requires --hf-repo. "
+        "Omit to scan all GGUF files in the repo.",
     )
     parser.add_argument(
         "--hf-revision",
@@ -213,8 +215,8 @@ def _print_human_summary(result: ScanResult, *, stream: TextIO, no_color: bool =
     return 0 if result.verdict in (Verdict.CLEAN, Verdict.SUSPICIOUS) else 1
 
 
-def _print_json(result: ScanResult, *, stream: TextIO) -> int:
-    payload = {
+def _result_to_json_dict(result: ScanResult) -> Dict[str, Any]:
+    return {
         "source": result.source,
         "verdict": result.verdict.value,
         "errors": result.errors,
@@ -256,8 +258,76 @@ def _print_json(result: ScanResult, *, stream: TextIO) -> int:
             "metadata_keys": result.evidence.metadata_keys,
         },
     }
-    stream.write(json.dumps(payload, indent=2) + "\n")
+
+
+def _print_json(result: ScanResult, *, stream: TextIO) -> int:
+    stream.write(json.dumps(_result_to_json_dict(result), indent=2) + "\n")
     return 0 if result.verdict in (Verdict.CLEAN, Verdict.SUSPICIOUS) else 1
+
+
+def _summarize_verdicts(results: List[ScanResult]) -> Dict[str, int]:
+    summary: Dict[str, int] = {"clean": 0, "suspicious": 0, "malicious": 0, "error": 0}
+    for result in results:
+        summary[result.verdict.value] += 1
+    return summary
+
+
+def _print_human_summaries(
+    results: List[ScanResult],
+    *,
+    repo_label: str,
+    stream: TextIO,
+    no_color: bool = False,
+) -> int:
+    stream_is_tty = bool(getattr(stream, "isatty", lambda: False)())
+    use_color = stream_is_tty and not no_color
+    console = Console(
+        file=stream,
+        force_terminal=use_color,
+        no_color=not use_color,
+    )
+
+    console.print(f"[bold]Repo:[/bold] {repo_label} ({len(results)} file(s))")
+    for result in results:
+        verdict_color = _get_verdict_color(result.verdict)
+        console.print(
+            f"  [{verdict_color}]{result.verdict.value}[/{verdict_color}] {result.source} "
+            f"({len(result.findings)} finding(s))"
+        )
+        for error in result.errors:
+            console.print(f"    [red]• error[{error.code}]:[/red] {error.message}")
+        for finding in result.findings:
+            severity_color = _get_severity_color(finding.severity)
+            console.print(
+                f"    [{severity_color}][{finding.severity.value}][/{severity_color}] "
+                f"{finding.rule_id} ({finding.template_name}): {finding.message}"
+            )
+
+    summary = _summarize_verdicts(results)
+    console.print(
+        f"[bold]Summary:[/bold] {summary['clean']} clean, "
+        f"{summary['suspicious']} suspicious, "
+        f"{summary['malicious']} malicious, "
+        f"{summary['error']} error"
+    )
+    return 0 if all(r.verdict in (Verdict.CLEAN, Verdict.SUSPICIOUS) for r in results) else 1
+
+
+def _print_json_results(
+    results: List[ScanResult],
+    *,
+    repo_id: str,
+    revision: str,
+    stream: TextIO,
+) -> int:
+    payload = {
+        "repo_id": repo_id,
+        "revision": revision,
+        "summary": _summarize_verdicts(results),
+        "results": [_result_to_json_dict(result) for result in results],
+    }
+    stream.write(json.dumps(payload, indent=2) + "\n")
+    return 0 if all(r.verdict in (Verdict.CLEAN, Verdict.SUSPICIOUS) for r in results) else 1
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -267,22 +337,50 @@ def main(argv: list[str] | None = None) -> int:
     source: HuggingFaceRepoRef | Path | str
 
     if args.hf_repo or args.hf_filename or args.hf_token:
-        if not args.hf_repo or not args.hf_filename:
-            parser.error("--hf-repo and --hf-filename are required together")
-        source = HuggingFaceRepoRef(
-            repo_id=args.hf_repo,
-            filename=args.hf_filename,
+        if not args.hf_repo:
+            parser.error("--hf-repo is required when --hf-filename or --hf-token is provided")
+        if args.source:
+            parser.error("positional source cannot be combined with --hf-repo")
+
+        config = _build_config(args)
+        scanner = GGUFTemplateScanner(
+            pillar_api_key=args.pillar_api_key,
+            config=config,
+        )
+        use_pillar = None if not args.no_pillar else False
+
+        if args.hf_filename:
+            result = scanner.scan_huggingface(
+                args.hf_repo,
+                args.hf_filename,
+                revision=args.hf_revision,
+                token=args.hf_token,
+                use_pillar=use_pillar,
+            )
+            if args.json:
+                return _print_json(result, stream=sys.stdout)
+            return _print_human_summary(result, stream=sys.stdout, no_color=args.no_color)
+
+        results = scanner.scan_huggingface_repo(
+            args.hf_repo,
             revision=args.hf_revision,
             token=args.hf_token,
+            use_pillar=use_pillar,
         )
+        repo_label = f"{args.hf_repo}@{args.hf_revision}"
+        if args.json:
+            return _print_json_results(
+                results, repo_id=args.hf_repo, revision=args.hf_revision, stream=sys.stdout
+            )
+        return _print_human_summaries(results, repo_label=repo_label, stream=sys.stdout, no_color=args.no_color)
+
+    if not args.source:
+        parser.error("path or URL required when Hugging Face options are not provided")
+    parsed = urlparse(args.source)
+    if parsed.scheme in {"http", "https"}:
+        source = args.source
     else:
-        if not args.source:
-            parser.error("path or URL required when Hugging Face options are not provided")
-        parsed = urlparse(args.source)
-        if parsed.scheme in {"http", "https"}:
-            source = args.source
-        else:
-            source = Path(args.source)
+        source = Path(args.source)
 
     config = _build_config(args)
     scanner = GGUFTemplateScanner(

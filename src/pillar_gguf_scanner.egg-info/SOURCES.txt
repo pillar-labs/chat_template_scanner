@@ -25,6 +25,7 @@ src/pillar_gguf_scanner/data/template_classifier.json.gz
 tests/test_cli.py
 tests/test_extractor.py
 tests/test_heuristics.py
+tests/test_hf_repo_scan.py
 tests/test_instruction_injection_detection.py
 tests/test_integration_heuristics.py
 tests/test_pillar_client.py

@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: pillar-gguf-scanner
-Version: 0.1.1
+Version: 0.1.2
 Summary: Fast, programmatic scanning utilities for GGUF chat templates.
 Author: Pillar Security
 License: Apache-2.0
@@ -225,6 +225,26 @@ ref = HuggingFaceRepoRef(
 result = scanner.scan(ref)
 ```
 
+### Scanning every GGUF in a Hugging Face repo
+
+`scan_huggingface_repo()` lists the repo tree at the given revision, keeps
+paths ending in `.gguf`, and scans each file (header-only range requests, so
+multi-file repos stay cheap):
+
+```python
+from pillar_gguf_scanner import GGUFTemplateScanner
+
+scanner = GGUFTemplateScanner()
+for result in scanner.scan_huggingface_repo("ariel-pillar/Qwen2.5-VL-7B-Instruct-GGUF"):
+    print(result.source, result.verdict.value)
+```
+
+An async variant (`ascan_huggingface_repo()`) and file-listing helpers
+(`list_huggingface_repo_files()`, `list_huggingface_gguf_files()`) are also
+available. If the repo cannot be listed, or contains no GGUF files, a
+single `Verdict.ERROR` result is returned (codes `remote_fetch_error` and
+`no_gguf_files`).
+
 ### Scanning from URLs
 
 Scan GGUF files from direct download URLs:
@@ -405,11 +425,25 @@ uv run pillar-gguf-scanner path/to/model.gguf
 
 # JSON output and remote scanning
 pillar-gguf-scanner path/to/model.gguf --json --pillar-api-key "$PILLAR_API_KEY"
+
+# scan a single file on Hugging Face
+pillar-gguf-scanner --hf-repo owner/repo --hf-filename model.gguf
+
+# scan every GGUF file in a Hugging Face repo
+uv run pillar-gguf-scanner --hf-repo ariel-pillar/Qwen2.5-VL-7B-Instruct-GGUF
 ```
+
+Repo scans print one verdict line per file plus a `Summary: X clean,
+Y suspicious, Z malicious, W error` footer. With `--json`, a repo scan emits
+`{"repo_id": ..., "revision": ..., "summary": {...}, "results": [...]}` where
+each entry has the same shape as a single-file scan. The exit code is 1 if
+any file is malicious or errored, 0 otherwise (single-file scans: 1 on
+malicious/error, 0 on clean/suspicious).
 
 Run `pillar-gguf-scanner --help` to see all options, including severity overrides and Pillar toggles.
 
-The core package scans local files, direct URLs, and specific Hugging Face GGUF files. Larger-scale Hugging Face crawling,
+The core package scans local files, direct URLs, single Hugging Face GGUF
+files, and whole Hugging Face repos. Larger-scale Hugging Face crawling,
 live monitoring, and registry-wide batch orchestration are intended to sit on top of the library rather than inside the core scanner.
 
 ```text
