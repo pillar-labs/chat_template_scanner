@@ -87,6 +87,12 @@ def _build_parser() -> argparse.ArgumentParser:
         "--hf-token",
         help="Optional Hugging Face token used for private artifacts",
     )
+    parser.add_argument(
+        "--jobs",
+        type=int,
+        default=8,
+        help="Maximum repo files to scan concurrently (default: 8). Only applies to whole-repo scans.",
+    )
     return parser
 
 
@@ -331,23 +337,27 @@ def _print_json_results(
     return 0 if all(r.verdict in (Verdict.CLEAN, Verdict.SUSPICIOUS) for r in results) else 1
 
 
-def _make_repo_progress_callback(repo_label: str) -> Callable[[int, int, ScanResult], None]:
-    """Build an on_progress callback announcing repo scan progress on stderr.
+RepoProgressCallbacks = tuple[Callable[[int], None], Callable[[int, int, ScanResult], None]]
+
+
+def _make_repo_progress_callbacks(repo_label: str) -> RepoProgressCallbacks:
+    """Build on_start/on_progress callbacks announcing repo scan progress on stderr.
 
     Writes to stderr so `--json` output on stdout stays parseable. Announces
-    the total file count on the first file, then one `[i/N] verdict source`
-    line per completed file.
+    the total file count up front, then one `[i/N] verdict source` line per
+    completed file (which may arrive out of order when scanning concurrently).
     """
 
     console = Console(file=sys.stderr)
 
+    def on_start(total: int) -> None:
+        console.print(f"Scanning {total} GGUF file(s) in {repo_label}…")
+
     def on_progress(index: int, total: int, result: ScanResult) -> None:
-        if index == 1:
-            console.print(f"Scanning {total} GGUF file(s) in {repo_label}…")
         verdict_color = _get_verdict_color(result.verdict)
         console.print(f"[{index}/{total}] [{verdict_color}]{result.verdict.value}[/{verdict_color}] {result.source}")
 
-    return on_progress
+    return on_start, on_progress
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -389,7 +399,11 @@ def _run_huggingface_scan(
         parser.error("--hf-repo must be in the form owner/repo")
     revision = args.hf_revision or "main"
     if args.hf_filename:
+        if args.jobs != 8:
+            parser.error("--jobs only applies to whole-repo scans (omit --hf-filename to use it)")
         return _run_huggingface_file_scan(args, scanner=scanner, repo_id=repo_id, revision=revision)
+    if args.jobs < 1:
+        parser.error("--jobs must be at least 1")
     return _run_huggingface_repo_scan(args, scanner=scanner, repo_id=repo_id, revision=revision)
 
 
@@ -420,12 +434,15 @@ def _run_huggingface_repo_scan(
     revision: str,
 ) -> int:
     repo_label = f"{repo_id}@{revision}"
+    on_start, on_progress = _make_repo_progress_callbacks(repo_label)
     results = scanner.scan_huggingface_repo(
         repo_id,
         revision=revision,
         token=args.hf_token,
         use_pillar=_use_pillar(args),
-        on_progress=_make_repo_progress_callback(repo_label),
+        on_progress=on_progress,
+        on_start=on_start,
+        max_concurrency=args.jobs,
     )
     if args.json:
         return _print_json_results(results, repo_id=repo_id, revision=revision, stream=sys.stdout)

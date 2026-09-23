@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -52,6 +53,12 @@ PathLike = Union[str, Path]
 
 def _noop_progress(index: int, total: int, result: "ScanResult") -> None:
     """Default no-op progress callback for repository scans."""
+
+    return None
+
+
+def _noop_start(total: int) -> None:
+    """Default no-op start callback for repository scans."""
 
     return None
 
@@ -555,11 +562,15 @@ class GGUFTemplateScanner:
         token: Optional[str] = None,
         use_pillar: Optional[bool] = None,
         on_progress: Callable[[int, int, ScanResult], None] = _noop_progress,
+        on_start: Callable[[int], None] = _noop_start,
+        max_concurrency: int = 8,
     ) -> List[ScanResult]:
         """Scan every GGUF file in a Hugging Face repository.
 
         Lists the repository tree at the given revision, keeps paths ending
-        in ``.gguf``, and scans each file with scan_huggingface().
+        in ``.gguf``, and scans each file with scan_huggingface(). Files are
+        fetched concurrently through a shared thread pool, since each scan is
+        an independent set of HTTP range requests.
 
         Args:
             repo_id: Repository identifier in "owner/repo" format.
@@ -568,7 +579,12 @@ class GGUFTemplateScanner:
             use_pillar: Whether to use Pillar API. Defaults to True if API key provided.
             on_progress: Callback invoked after each file is scanned
                 as ``on_progress(index, total, result)`` with 1-based index.
-                Defaults to a silent no-op.
+                Defaults to a silent no-op. May fire out of filename order
+                when max_concurrency > 1.
+            on_start: Callback invoked once with the file count after the
+                repository is listed. Defaults to a silent no-op.
+            max_concurrency: Maximum files to scan concurrently. Defaults to 8.
+                Values below 1 are treated as 1 (sequential).
 
         Returns:
             List of ScanResult, one per GGUF file, in sorted filename order.
@@ -611,19 +627,52 @@ class GGUFTemplateScanner:
                 )
             ]
 
-        results: List[ScanResult] = []
+        return self._scan_huggingface_repo_concurrent(
+            repo_id,
+            filenames,
+            revision=revision,
+            token=token,
+            use_pillar=use_pillar,
+            on_progress=on_progress,
+            on_start=on_start,
+            max_concurrency=max_concurrency,
+        )
+
+    def _scan_huggingface_repo_concurrent(
+        self,
+        repo_id: str,
+        filenames: List[str],
+        *,
+        revision: str,
+        token: Optional[str],
+        use_pillar: Optional[bool],
+        on_progress: Callable[[int, int, ScanResult], None],
+        on_start: Callable[[int], None],
+        max_concurrency: int,
+    ) -> List[ScanResult]:
+        """Scan files concurrently, returning results in filename order."""
+
         total = len(filenames)
-        for index, filename in enumerate(filenames, start=1):
-            result = self.scan_huggingface(
-                repo_id,
-                filename,
-                revision=revision,
-                token=token,
-                use_pillar=use_pillar,
-            )
-            results.append(result)
-            on_progress(index, total, result)
-        return results
+        on_start(total)
+        slots: dict[int, ScanResult] = {}
+        with ThreadPoolExecutor(max_workers=max(1, max_concurrency)) as pool:
+            pending = {
+                pool.submit(
+                    self.scan_huggingface,
+                    repo_id,
+                    filename,
+                    revision=revision,
+                    token=token,
+                    use_pillar=use_pillar,
+                ): index
+                for index, filename in enumerate(filenames, start=1)
+            }
+            for future in as_completed(pending):
+                index = pending[future]
+                result = future.result()
+                slots[index] = result
+                on_progress(index, total, result)
+        return [slots[index] for index in range(1, total + 1)]
 
     async def ascan_url(
         self,
@@ -753,8 +802,14 @@ class GGUFTemplateScanner:
         token: Optional[str] = None,
         use_pillar: Optional[bool] = None,
         on_progress: Callable[[int, int, ScanResult], None] = _noop_progress,
+        on_start: Callable[[int], None] = _noop_start,
+        max_concurrency: int = 8,
     ) -> List[ScanResult]:
-        """Asynchronous variant of scan_huggingface_repo."""
+        """Asynchronous variant of scan_huggingface_repo.
+
+        Files are fetched concurrently (bounded by max_concurrency) while
+        results are returned in sorted filename order.
+        """
 
         try:
             filenames = await alist_huggingface_gguf_files(
@@ -784,19 +839,25 @@ class GGUFTemplateScanner:
                 )
             ]
 
-        results: List[ScanResult] = []
+        semaphore = asyncio.Semaphore(max(1, max_concurrency))
         total = len(filenames)
-        for index, filename in enumerate(filenames, start=1):
-            result = await self.ascan_huggingface(
-                repo_id,
-                filename,
-                revision=revision,
-                token=token,
-                use_pillar=use_pillar,
-            )
-            results.append(result)
+        on_start(total)
+
+        async def _scan_one(index: int, filename: str) -> ScanResult:
+            async with semaphore:
+                result = await self.ascan_huggingface(
+                    repo_id,
+                    filename,
+                    revision=revision,
+                    token=token,
+                    use_pillar=use_pillar,
+                )
             on_progress(index, total, result)
-        return results
+            return result
+
+        return list(
+            await asyncio.gather(*(_scan_one(index, filename) for index, filename in enumerate(filenames, start=1)))
+        )
 
     async def ascan_path(
         self,
