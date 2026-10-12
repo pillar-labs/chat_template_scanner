@@ -202,9 +202,10 @@ def test_cli_hf_repo_scans_whole_repo(monkeypatch, capsys, scan_result_factory) 
     exit_code = cli.main(["--hf-repo", "owner/repo"])
 
     assert exit_code == 1
-    on_progress = stub.mock.scan_huggingface_repo.call_args.kwargs["on_progress"]
+    callbacks = stub.mock.scan_huggingface_repo.call_args.kwargs
+    callbacks["on_start"](len(results))
     for index, result in enumerate(results, start=1):
-        on_progress(index, len(results), result)
+        callbacks["on_progress"](index, len(results), result)
     captured = capsys.readouterr()
     assert "Repo:" in captured.out
     assert "1 clean" in captured.out
@@ -280,3 +281,109 @@ def test_cli_hf_positional_redirects_to_hf_repo_flag(capsys) -> None:
         cli.main(["hf://owner/repo"])
     assert exc_info.value.code == 2
     assert "--hf-repo owner/repo" in capsys.readouterr().err
+
+
+def test_scan_huggingface_repo_concurrent_keeps_filename_order(monkeypatch, scan_result_factory) -> None:
+    scanner = GGUFTemplateScanner()
+    monkeypatch.setattr(
+        "pillar_gguf_scanner.scanner.list_huggingface_gguf_files",
+        lambda *args, **kwargs: ["a.gguf", "b.gguf", "c.gguf", "d.gguf"],
+    )
+    monkeypatch.setattr(
+        GGUFTemplateScanner,
+        "scan_huggingface",
+        lambda self, repo_id, filename, **kwargs: scan_result_factory(
+            verdict=Verdict.CLEAN, source=f"huggingface:{repo_id}/{filename}@main"
+        ),
+    )
+    seen = []
+    started = []
+    results = scanner.scan_huggingface_repo(
+        "owner/repo",
+        max_concurrency=4,
+        on_progress=lambda i, n, r: seen.append((i, n)),
+        on_start=started.append,
+    )
+
+    assert [r.source for r in results] == [
+        "huggingface:owner/repo/a.gguf@main",
+        "huggingface:owner/repo/b.gguf@main",
+        "huggingface:owner/repo/c.gguf@main",
+        "huggingface:owner/repo/d.gguf@main",
+    ]
+    assert sorted(seen) == [(1, 4), (2, 4), (3, 4), (4, 4)]
+    assert started == [4]
+
+
+def test_scan_huggingface_repo_clamps_nonpositive_concurrency(monkeypatch, scan_result_factory) -> None:
+    scanner = GGUFTemplateScanner()
+    monkeypatch.setattr(
+        "pillar_gguf_scanner.scanner.list_huggingface_gguf_files",
+        lambda *args, **kwargs: ["a.gguf"],
+    )
+    monkeypatch.setattr(
+        GGUFTemplateScanner,
+        "scan_huggingface",
+        lambda self, repo_id, filename, **kwargs: scan_result_factory(
+            verdict=Verdict.CLEAN, source=f"huggingface:{repo_id}/{filename}@main"
+        ),
+    )
+    results = scanner.scan_huggingface_repo("owner/repo", max_concurrency=0)
+
+    assert [r.source for r in results] == ["huggingface:owner/repo/a.gguf@main"]
+
+
+@pytest.mark.asyncio
+async def test_ascan_huggingface_repo_concurrent_keeps_order(monkeypatch, scan_result_factory) -> None:
+    scanner = GGUFTemplateScanner()
+    monkeypatch.setattr(
+        "pillar_gguf_scanner.scanner.alist_huggingface_gguf_files",
+        mock.AsyncMock(return_value=["a.gguf", "b.gguf", "c.gguf"]),
+    )
+
+    async def fake_ascan(self, repo_id, filename, **kwargs):
+        return scan_result_factory(verdict=Verdict.CLEAN, source=f"huggingface:{repo_id}/{filename}@main")
+
+    monkeypatch.setattr(GGUFTemplateScanner, "ascan_huggingface", fake_ascan)
+    seen = []
+    results = await scanner.ascan_huggingface_repo(
+        "owner/repo", max_concurrency=2, on_progress=lambda i, n, r: seen.append((i, n))
+    )
+
+    assert [r.source for r in results] == [
+        "huggingface:owner/repo/a.gguf@main",
+        "huggingface:owner/repo/b.gguf@main",
+        "huggingface:owner/repo/c.gguf@main",
+    ]
+    assert sorted(seen) == [(1, 3), (2, 3), (3, 3)]
+
+
+def test_cli_jobs_passthrough(monkeypatch, capsys, scan_result_factory) -> None:
+    results = [scan_result_factory(verdict=Verdict.CLEAN, source="huggingface:owner/repo/a.gguf@main")]
+    stub = _patch_scanner(monkeypatch, scan_result_factory, results)
+
+    exit_code = cli.main(["--hf-repo", "owner/repo", "--jobs", "2"])
+
+    assert exit_code == 0
+    assert stub.mock.scan_huggingface_repo.call_args.kwargs["max_concurrency"] == 2
+
+
+def test_cli_jobs_defaults_to_sequential_parallelism(monkeypatch, capsys, scan_result_factory) -> None:
+    results = [scan_result_factory(verdict=Verdict.CLEAN, source="huggingface:owner/repo/a.gguf@main")]
+    stub = _patch_scanner(monkeypatch, scan_result_factory, results)
+
+    cli.main(["--hf-repo", "owner/repo"])
+
+    assert stub.mock.scan_huggingface_repo.call_args.kwargs["max_concurrency"] == 8
+
+
+def test_cli_jobs_rejects_nonpositive() -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(["--hf-repo", "owner/repo", "--jobs", "0"])
+    assert exc_info.value.code == 2
+
+
+def test_cli_jobs_rejected_for_single_file_scan() -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(["--hf-repo", "owner/repo", "--hf-filename", "model.gguf", "--jobs", "4"])
+    assert exc_info.value.code == 2

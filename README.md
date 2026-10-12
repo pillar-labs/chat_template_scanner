@@ -225,7 +225,10 @@ for result in scanner.scan_huggingface_repo("ariel-pillar/Qwen2.5-VL-7B-Instruct
 
 An async variant (`ascan_huggingface_repo()`) and file-listing helpers
 (`list_huggingface_repo_files()`, `list_huggingface_gguf_files()`) are also
-available. If the repo cannot be listed, or contains no GGUF files, a
+available. Files are pulled concurrently (default 8 at a time, tunable via
+`max_concurrency`), so multi-file repos stay fast; per-file progress lines
+may arrive out of order but results are returned in filename order. If the
+repo cannot be listed, or contains no GGUF files, a
 single `Verdict.ERROR` result is returned (codes `remote_fetch_error` and
 `no_gguf_files`).
 
@@ -418,6 +421,9 @@ pillar-gguf-scanner --hf-repo owner/repo --hf-filename model.gguf
 
 # scan every GGUF file in a Hugging Face repo
 uv run pillar-gguf-scanner --hf-repo ariel-pillar/Qwen2.5-VL-7B-Instruct-GGUF
+
+# same, but with 4 concurrent downloads instead of the default 8
+uv run pillar-gguf-scanner --hf-repo ariel-pillar/Qwen2.5-VL-7B-Instruct-GGUF --jobs 4
 ```
 
 `--hf-revision` requires `--hf-repo`. Leading `hf://` and trailing slashes on
